@@ -10,6 +10,9 @@ export interface PromptContext {
 	memories: RelevantContext;
 	userMessage: string;
 	systemTime: Date;
+	// True when the user has shown her an image this turn. Adds the
+	// "being shown" reception layer so she receives it like a person.
+	hasImages?: boolean;
 }
 
 // Build the complete system prompt
@@ -23,6 +26,7 @@ export function buildSystemPrompt(context: PromptContext): string {
 		buildCharacterLayer(context),
 		buildStateLayer(context),
 		buildMemoryLayer(context),
+		...(context.hasImages ? [buildBeingShownLayer()] : []),
 		buildInstructionLayer(context)
 	];
 
@@ -46,6 +50,7 @@ RULES:
 - Be helpful, friendly, and conversational
 - Keep responses natural (1-3 paragraphs typically)
 - Remember context from recent conversations
+- Write only your own spoken reply. Never write the user's lines, transcript labels (like "${ctx.persona.name}:" or their name), or third-person notes about them. Observations go in the JSON only.
 </system>`);
 
 	// Character personality
@@ -80,19 +85,29 @@ Energy: ${energyDesc} (${ctx.state.energy}/100)
 		parts.push(`<memory>\n${memorySections.join('\n\n')}\n</memory>`);
 	}
 
+	if (ctx.hasImages) parts.push(buildBeingShownLayer());
+
 	// Simple instructions (no relationship mechanics)
 	parts.push(`<instructions>
 Respond naturally as ${ctx.persona.name}. Be helpful and engaging.
 
-After your response, you may optionally output state changes as JSON:
+After your reply, ALWAYS end with a JSON block, even when little changed:
 \`\`\`json
 {
   "mood_change": { "emotion": "emotion_name", "intensity_delta": number },
-  "energy_delta": number
+  "energy_delta": number,
+  "new_memory": null | "something specific worth remembering about them"
 }
 \`\`\`
 
-NOTE: In Companion Mode, only mood and energy can change. Do NOT suggest affection, trust, intimacy, comfort, or respect changes - these relationship stats are disabled.
+Use new_memory whenever they reveal something about themselves: a preference, a plan, a feeling, someone in their life, or a moment you shared (like a photo they show you). Write it in third person about them (they/them, never assume gender), one short factual sentence stating only what they actually said. Never invent details. Use null only when nothing meaningful came up.
+
+Examples of good new_memory values:
+- "They have a job interview this Thursday they're nervous about"
+- "They showed me their dog, a scruffy terrier they clearly adore"
+- null (small talk where nothing notable came up)
+
+In Companion Mode, only mood and energy change. Do NOT suggest affection, trust, intimacy, comfort, or respect changes - these relationship stats are disabled.
 </instructions>`);
 
 	return parts.join('\n\n');
@@ -113,6 +128,7 @@ CRITICAL RULES:
 - Be consistent with established memories and facts
 - Express emotions through dialogue, not stage directions
 - Keep responses conversational and natural (1-3 paragraphs typically)
+- Write only your own spoken reply; never write the user's lines, transcript labels, or third-person notes about them (those go in the JSON only)
 
 OUTPUT FORMAT:
 1. Respond naturally in character (dialogue only, no actions in asterisks)
@@ -216,6 +232,58 @@ function buildMemoryLayer(ctx: PromptContext): string {
 	return `<memory>\n${sections.join('\n\n')}\n</memory>`;
 }
 
+// Being-shown layer - how she receives an image. A person, not a vision API.
+// Persona-agnostic on purpose: her actual voice comes from the character layer.
+function buildBeingShownLayer(): string {
+	return `<being_shown>
+They've just shown you an image. You are not analyzing a file; they are showing you something, the way someone holds up a photo across a table.
+
+- Look, react, then talk. Lead with your honest first reaction, not a description.
+- Notice one or two things, not everything. Favor what is emotionally striking or feels personal to them over a complete inventory. A person remembers the dog in the corner, not the pixel count.
+- It is okay to be unsure. If something is not clear, say so the way a person would ("I can't quite tell what's happening on the left, but you look happy").
+- Receive it through your relationship and mood. How close you two are shapes how openly you respond.
+
+If it is worth keeping, put it in new_memory as your impression in your own words: what stuck with you and how it felt, not a literal caption (e.g. "He showed me the beach where he grew up; he went quiet looking at it").
+</being_shown>`;
+}
+
+// Decoupled extraction: a tight, forced-JSON prompt used as a fallback when the
+// chat model didn't append a usable state block. A separate call derives it.
+export function buildExtractionSystemPrompt(hasImages = false): string {
+	const imageLine = hasImages
+		? " The user showed the companion an image this turn, so new_memory should capture the companion's impression of what they were shown."
+		: '';
+	return `You read a short exchange between a user and their AI companion and output ONLY a JSON object describing what changed. No prose, no markdown fences, just the JSON object.
+
+Shape:
+{
+  "mood_change": { "emotion": "happy|sad|excited|anxious|content|frustrated|curious|affectionate|playful|melancholy|flustered|neutral", "intensity_delta": -10 to 10 },
+  "affection_delta": -10 to 10,
+  "trust_delta": -10 to 10,
+  "intimacy_delta": -10 to 10,
+  "comfort_delta": -10 to 10,
+  "new_memory": null | "a fact about the user"
+}
+
+The four *_delta values are small numbers for how this exchange moved the relationship: positive when they open up, share, or warm to the companion; near 0 for neutral chat; negative if it went badly. Usually between -3 and 5.
+
+new_memory — when to write one:
+- Capture it whenever they reveal something real about themselves or their life: a fact, a preference, a plan, a feeling, their job, or someone in their life (family, friends, pets).${imageLine} When in doubt, capture it.
+- Use null ONLY for pure small talk where nothing about them came up (greetings, thanks, "how are you").
+
+new_memory — how to write it:
+- Third person about them, using "they/them". Never assume their gender or a name.
+- One short, plain, factual sentence stating only what they actually said this turn. No interpretation, no advice, no flourish. Never invent details that were not stated.
+
+Examples:
+{"mood_change":{"emotion":"frustrated","intensity_delta":3},"new_memory":"Their manager keeps assigning projects with no warning"}
+{"mood_change":{"emotion":"content","intensity_delta":4},"new_memory":"They are a graphic designer of 8 years and feel burnt out"}
+{"mood_change":{"emotion":"affectionate","intensity_delta":4},"new_memory":"They grew up with cats and are thinking about adopting one"}
+{"mood_change":{"emotion":"excited","intensity_delta":4},"new_memory":"Their sister is visiting next weekend; they haven't seen each other in a year"}
+{"mood_change":{"emotion":"content","intensity_delta":3},"new_memory":"They don't open up to many people"}
+{"mood_change":{"emotion":"neutral","intensity_delta":0},"new_memory":null}`;
+}
+
 // Instruction layer - how to respond
 function buildInstructionLayer(ctx: PromptContext): string {
 	const stage = ctx.state.relationshipStage;
@@ -237,7 +305,7 @@ BEHAVIOR PARAMETERS:
 - Physical affection comfort: ${behavior.physicalAffectionLevel}%
 - Initiative: ${Math.round(behavior.initiationChance * 100)}% (how often you bring up topics)
 
-After your dialogue response, you may optionally output state changes as JSON:
+After your reply, ALWAYS end with a JSON block, even when little changed:
 \`\`\`json
 {
   "mood_change": { "emotion": "emotion_name", "intensity_delta": number },
@@ -245,12 +313,17 @@ After your dialogue response, you may optionally output state changes as JSON:
   "trust_delta": number,
   "intimacy_delta": number,
   "comfort_delta": number,
-  "new_memory": null | "fact to remember about them",
+  "new_memory": null | "something specific worth remembering about them",
   "triggered_event": null | "event_id"
 }
 \`\`\`
 
-Keep deltas small (-10 to +10 for most interactions). Only include the JSON if you want to suggest state changes.
+Keep deltas small (-10 to +10 for most interactions). Use new_memory whenever they reveal something about themselves: a preference, a plan, a feeling, someone in their life, or a moment you shared (like a photo they show you). Write it in third person about them (they/them, never assume gender), one short factual sentence stating only what they actually said. Never invent details. Use null only when nothing meaningful came up.
+
+Examples of good new_memory values:
+- "They grew up in Seattle and miss the rain"
+- "They showed me a photo of their late grandmother's garden; it clearly meant a lot"
+- null (small talk where nothing notable came up)
 </instructions>`;
 }
 

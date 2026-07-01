@@ -5,6 +5,8 @@
 	import { TopRightButtons, TopLeftButtons, InfoModal } from '$lib/components/ui';
 	import BottomChatBar from '$lib/components/chat/BottomChatBar.svelte';
 	import SpeechBubble from '$lib/components/chat/SpeechBubble.svelte';
+	import ThinkingImages from '$lib/components/chat/ThinkingImages.svelte';
+	import Photoboard from '$lib/components/chat/Photoboard.svelte';
 	import { EventScene } from '$lib/components/events';
 	import { OnboardingModal } from '$lib/components/onboarding';
 	import MemoryGraphModal from '$lib/components/memory/MemoryGraphModal.svelte';
@@ -16,8 +18,12 @@
 	import { characterStore } from '$lib/stores/character.svelte';
 	import { personaStore } from '$lib/stores/persona.svelte';
 	import { debugEventsStore } from '$lib/stores/debugEvents.svelte';
-	import { getLLMProvider, getTTSProvider } from '$lib/services/providers/registry';
-	import { streamChatDirect } from '$lib/services/chat/client-chat';
+	import { getLLMProvider, getTTSProvider, providerSupportsVision } from '$lib/services/providers/registry';
+	import { isLocalLLMProvider } from '$lib/services/providers/local-endpoints';
+	import { canShowImages } from '$lib/services/providers/vision';
+	import { streamChatDirect, extractStateUpdates } from '$lib/services/chat/client-chat';
+	import { keepImage, type PreparedImage } from '$lib/services/storage/keepsakes';
+	import { type ContentPart, toOpenAIContent } from '$lib/services/chat/content';
 	import { isTauri } from '$lib/services/platform';
 	import type { TTSProvider } from '$lib/types';
 	import type { StateUpdates } from '$lib/types/character';
@@ -25,7 +31,7 @@
 	import { onMount } from 'svelte';
 
 	// V2 companion system imports
-	import { buildSystemPrompt, type PromptContext } from '$lib/ai/prompt-builder';
+	import { buildSystemPrompt, buildExtractionSystemPrompt, type PromptContext } from '$lib/ai/prompt-builder';
 	import { parseResponse, validateStateUpdates, extractPotentialFacts } from '$lib/ai/response-parser';
 	import { calculateBaselineUpdates, analyzeMessage } from '$lib/engine/heuristics';
 	import { mergeUpdates, checkAndApplyStageTransition } from '$lib/engine/state-updates';
@@ -50,6 +56,9 @@
 
 	// Info modal state
 	let showInfoModal = $state(false);
+	let showBoard = $state(false);
+	// Her impression from the latest turn, attached to a kept photo as its note.
+	let lastNewMemory: string | undefined;
 
 	// Memory graph modal state
 	let showMemoryGraph = $state(false);
@@ -61,6 +70,26 @@
 	// Speech bubble state
 	let latestResponse = $state('');
 	let isTyping = $state(false);
+	// Images she's currently being shown, floated above her head while she thinks
+	let thinkingImages = $state<{ id: string; url: string }[]>([]);
+
+	// Can the active LLM actually see images? Gates the "show" affordance.
+	const visionCapable = $derived.by(() => {
+		const cs = modulesStore.getModuleSettings('consciousness');
+		const provider = cs.activeProvider as string;
+		const model = cs.activeModel as string;
+		if (!provider) return false;
+		return canShowImages(providerSupportsVision(provider), isLocalLLMProvider(provider), model);
+	});
+
+	// Provider info for the one-time "where do photos go" disclosure.
+	const imageProvider = $derived.by(() => {
+		const provider = modulesStore.getModuleSettings('consciousness').activeProvider as string;
+		return {
+			label: getLLMProvider(provider)?.name ?? 'your AI provider',
+			isLocal: provider ? isLocalLLMProvider(provider) : false
+		};
+	});
 
 	// Track memory hydration
 	let isMemoryReady = $state(false);
@@ -119,14 +148,49 @@
 	});
 
 	// Process companion response with v2 system
-	async function processCompanionResponse(userMessage: string, companionResponse: string): Promise<string> {
+	async function processCompanionResponse(
+		userMessage: string,
+		companionResponse: string,
+		llm: { provider: string; model: string; apiKey?: string; baseURL?: string; hasImages: boolean }
+	): Promise<string> {
 		const state = characterStore.state;
 
 		const baselineUpdates = calculateBaselineUpdates(userMessage, state);
 
 		const parsed = parseResponse(companionResponse);
 		const dialogue = parsed.dialogue;
-		const llmUpdates = parsed.stateUpdates;
+		let llmUpdates = parsed.stateUpdates;
+
+		if (import.meta.env.DEV) {
+			console.log('%c[LLM raw response]', 'color:#01B2FF;font-weight:bold', companionResponse);
+			console.log('%c[LLM parsed]', 'color:#22c55e;font-weight:bold', {
+				stateUpdates: llmUpdates,
+				new_memory: llmUpdates?.newMemory ?? null
+			});
+		}
+
+		// Decoupled fallback: the model skipped the inline JSON, so ask a dedicated
+		// forced-JSON call to extract mood + memory from the exchange.
+		if (!llmUpdates) {
+			const extracted = await extractStateUpdates({
+				provider: llm.provider as import('$lib/types').LLMProvider,
+				model: llm.model,
+				apiKey: llm.apiKey,
+				baseURL: llm.baseURL,
+				system: buildExtractionSystemPrompt(llm.hasImages),
+				userMessage,
+				reply: dialogue
+			});
+			if (extracted) {
+				// parseResponse handles both bare JSON (OpenAI json_object) and a
+				// model-added ```json fence (Anthropic). Don't re-wrap — double
+				// fencing makes the non-greedy fence regex capture an empty block.
+				llmUpdates = parseResponse(extracted).stateUpdates;
+				if (import.meta.env.DEV) {
+					console.log('%c[extraction fallback]', 'color:#f59e0b;font-weight:bold', extracted, '->', llmUpdates);
+				}
+			}
+		}
 
 		let validatedLLMUpdates = null;
 		if (llmUpdates) {
@@ -136,6 +200,7 @@
 
 		const finalUpdates = mergeUpdates(baselineUpdates, validatedLLMUpdates || {});
 		characterStore.applyUpdates(finalUpdates);
+		lastNewMemory = finalUpdates.newMemory || undefined;
 
 		// Save LLM memory observation
 		if (finalUpdates.newMemory) {
@@ -195,26 +260,35 @@
 	}
 
 	// Build system prompt
-	async function buildCompanionSystemPrompt(userMessage: string): Promise<string> {
+	async function buildCompanionSystemPrompt(userMessage: string, hasImages = false): Promise<string> {
 		const state = characterStore.state;
 		const persona = personaStore.activeCard;
 
 		const memories = await retrieveRelevantContext(userMessage);
+
+		if (import.meta.env.DEV) {
+			console.log('%c[memory hydration]', 'color:#a855f7;font-weight:bold', {
+				relevantFacts: memories.relevantFacts.map((f) => f.content),
+				triggered: memories.triggeredMemories.map((m) => m.content),
+				recentTurns: memories.recentTurns.length
+			});
+		}
 
 		const context: PromptContext = {
 			persona,
 			state,
 			memories,
 			userMessage,
-			systemTime: new Date()
+			systemTime: new Date(),
+			hasImages
 		};
 
 		return buildSystemPrompt(context);
 	}
 
 	// Handle send message
-	async function handleSend(content: string) {
-		if (!content.trim() || chatStore.isLoading) return;
+	async function handleSend(content: string, images: PreparedImage[] = []) {
+		if ((!content.trim() && images.length === 0) || chatStore.isLoading) return;
 
 		// Check if chat is enabled
 		if (!modulesStore.isModuleEnabled('consciousness')) {
@@ -222,7 +296,9 @@
 			return;
 		}
 
-		chatStore.addMessage('user', content);
+		const shown = images.map((img) => ({ id: img.id, url: URL.createObjectURL(img.blob) }));
+		chatStore.addMessage('user', content, shown);
+		thinkingImages = shown;
 		chatStore.setLoading(true);
 		chatStore.setError(null);
 		isTyping = true;
@@ -240,7 +316,7 @@
 				throw new Error('Please configure a provider in Settings > Modules > Consciousness');
 			}
 
-			const systemPrompt = await buildCompanionSystemPrompt(content);
+			const systemPrompt = await buildCompanionSystemPrompt(content, images.length > 0);
 			const providerConfig = settingsStore.getProviderConfig(provider);
 			const apiKey = providerConfig.apiKey;
 			const providerMeta = getLLMProvider(provider);
@@ -255,11 +331,26 @@
 
 			const shouldUseDirectChat = isTauri() || !!providerMeta?.isLocal;
 
+			// The current turn carries the image bytes; prior turns stay text.
+			const history = chatStore.messages.slice(0, -1).filter((m) => m.content || m.images?.length);
+			const directMessages = history.map((m, idx) => {
+				const isCurrentTurn = idx === history.length - 1 && images.length > 0;
+				if (!isCurrentTurn) {
+					return { role: m.role as 'user' | 'assistant', content: m.content };
+				}
+				const parts: ContentPart[] = [];
+				if (m.content) parts.push({ type: 'text', text: m.content });
+				for (const img of images) {
+					parts.push({ type: 'image', mimeType: img.mimeType, data: img.base64 });
+				}
+				return { role: m.role as 'user' | 'assistant', content: parts };
+			});
+
 			if (shouldUseDirectChat) {
 				await new Promise<void>((resolve, reject) => {
 					streamChatDirect(
 						{
-							messages: chatStore.messages.slice(0, -1).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+							messages: directMessages,
 							provider: provider as import('$lib/types').LLMProvider,
 							model: selectedModel,
 							apiKey: apiKey || undefined,
@@ -276,7 +367,10 @@
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						messages: chatStore.messages.map((m) => ({ role: m.role, content: m.content })),
+						messages: directMessages.map((m) => ({
+							role: m.role,
+							content: toOpenAIContent(m.content)
+						})),
 						provider,
 						model: selectedModel,
 						apiKey: apiKey || 'not-needed',
@@ -310,7 +404,23 @@
 			}
 
 			isTyping = false;
-			const cleanedResponse = await processCompanionResponse(content, fullContent);
+			const cleanedResponse = await processCompanionResponse(content, fullContent, {
+				provider,
+				model: selectedModel,
+				apiKey: apiKey || undefined,
+				baseURL: providerConfig.baseUrl || providerMeta?.defaultBaseUrl,
+				hasImages: images.length > 0
+			});
+
+			// She's seen it and responded; keep the shown images as local keepsakes
+			if (images.length > 0) {
+				await Promise.all(
+					images.map((img) =>
+						keepImage(img.id, img.blob, { mimeType: img.mimeType, note: lastNewMemory })
+					)
+				);
+			}
+
 			chatStore.updateLastMessage(cleanedResponse);
 			latestResponse = cleanedResponse;
 
@@ -381,9 +491,12 @@
 
 <div class="app-container">
 	<TopLeftButtons onOpenMemoryGraph={() => showMemoryGraph = true} />
-	<TopRightButtons onInfoClick={() => showInfoModal = true} />
+	<TopRightButtons onInfoClick={() => showInfoModal = true} onBoardClick={() => showBoard = true} />
 	{#if showInfoModal}
 		<InfoModal onClose={() => showInfoModal = false} />
+	{/if}
+	{#if showBoard}
+		<Photoboard onClose={() => showBoard = false} />
 	{/if}
 	{#if showMemoryGraph}
 		<MemoryGraphModal onClose={() => showMemoryGraph = false} />
@@ -423,8 +536,17 @@
 			onHide={handleBubbleHide}
 		/>
 
+		<!-- The image she's being shown, floated above her head while she considers it -->
+		<ThinkingImages images={thinkingImages} show={isTyping} />
+
 		<!-- Bottom Chat Bar -->
-		<BottomChatBar onSend={handleSend} disabled={chatStore.isLoading} />
+		<BottomChatBar
+			onSend={handleSend}
+			disabled={chatStore.isLoading}
+			{visionCapable}
+			providerLabel={imageProvider.label}
+			providerIsLocal={imageProvider.isLocal}
+		/>
 
 		<!-- Error toast for chat errors -->
 		{#if chatStore.error}

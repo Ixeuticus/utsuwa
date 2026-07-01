@@ -39,44 +39,167 @@ const VALID_EMOTIONS: Emotion[] = [
 	'neutral'
 ];
 
+// Common free-form / compound emotions weaker and RP-tuned models emit, mapped
+// to our canonical set. Lets their mood signal land instead of being dropped.
+const EMOTION_SYNONYMS: Record<string, Emotion> = {
+	joy: 'happy', joyful: 'happy', glad: 'happy', cheerful: 'happy', pleased: 'happy',
+	grateful: 'happy', thankful: 'happy', delighted: 'happy', proud: 'happy',
+	excitement: 'excited', thrilled: 'excited', eager: 'excited', enthusiastic: 'excited',
+	nervous: 'anxious', worried: 'anxious', scared: 'anxious', afraid: 'anxious',
+	fearful: 'anxious', uneasy: 'anxious', tense: 'anxious', stressed: 'anxious',
+	calm: 'content', relaxed: 'content', peaceful: 'content', satisfied: 'content',
+	comfortable: 'content', 'cared-for': 'content', serene: 'content', reassured: 'content',
+	angry: 'frustrated', annoyed: 'frustrated', irritated: 'frustrated', upset: 'frustrated',
+	mad: 'frustrated', exasperated: 'frustrated',
+	interested: 'curious', intrigued: 'curious', inquisitive: 'curious',
+	loving: 'affectionate', warm: 'affectionate', tender: 'affectionate', fond: 'affectionate',
+	caring: 'affectionate', affection: 'affectionate', adoring: 'affectionate',
+	fun: 'playful', teasing: 'playful', mischievous: 'playful', silly: 'playful', cheeky: 'playful',
+	down: 'melancholy', blue: 'melancholy', wistful: 'melancholy', nostalgic: 'melancholy',
+	lonely: 'melancholy', somber: 'melancholy', gloomy: 'melancholy',
+	unhappy: 'sad', hurt: 'sad', disappointed: 'sad', heartbroken: 'sad', sorrowful: 'sad',
+	embarrassed: 'flustered', shy: 'flustered', bashful: 'flustered', blushing: 'flustered',
+	fine: 'neutral', okay: 'neutral', indifferent: 'neutral'
+};
+
+// Resolve a model's emotion string to one of our canonical emotions, taking the
+// first of a compound ("happy|curious", "warm, caring") and mapping synonyms.
+function normalizeEmotion(raw: string | undefined): Emotion | null {
+	if (!raw) return null;
+	const first = raw.toLowerCase().trim().split(/[|/,]/)[0].trim();
+	if (VALID_EMOTIONS.includes(first as Emotion)) return first as Emotion;
+	return EMOTION_SYNONYMS[first] ?? null;
+}
+
+// Chat-template / stop tokens some local GGUFs leak into their text output. An
+// end-of-turn marker means the turn is over, so anything after it is a
+// hallucinated next turn and gets cut; the rest are just removed.
+const END_OF_TURN_RE = /<\/s>|<\|im_end\|>|<\|eot_id\|>|<\|end_of_text\|>|<\|endoftext\|>|<end_of_turn>/i;
+const STRAY_TOKEN_RE = /<\|[a-z0-9_]+\|>|<\/?s>|<\/?(?:bos|eos)>|<\/?(?:start|end)_of_turn>|\[\/?INST\]/gi;
+
+function stripControlTokens(text: string): string {
+	const idx = text.search(END_OF_TURN_RE);
+	const cut = idx === -1 ? text : text.slice(0, idx);
+	return cut.replace(STRAY_TOKEN_RE, '');
+}
+
+// The model sometimes keeps writing past its own reply and starts a new
+// transcript turn as the user or a narrator (e.g. `CJ: "..."`, `They: ...`,
+// `User: ...`), often a third-person note it meant for the memory JSON. Cut at
+// the first such turn on a LATER line (anchored to \n, so the real reply on
+// line one is never the cut point). Names vary, so we key on a known transcript
+// label or any `Name: "` that opens a quoted line.
+const HALLUCINATED_TURN_RE =
+	/\n[ \t]*(?:(?:They|You|User|Human|Assistant|Narrator|System|AI)[ \t]*:[ \t]|[A-Z][\w'’.-]{0,19}[ \t]*:[ \t]*["“])/;
+
+function cutHallucinatedTurn(text: string): string {
+	const m = text.match(HALLUCINATED_TURN_RE);
+	return m && m.index !== undefined ? text.slice(0, m.index) : text;
+}
+
+// JSON objects we care about carry at least one of these keys.
+const STATE_KEY_RE =
+	/"(?:mood_change|affection_delta|trust_delta|intimacy_delta|comfort_delta|respect_delta|new_memory)"/;
+
+// Reasoning models (R1-style) emit a scratchpad before the answer. Strip it so
+// the trace never reaches the chat bubble or the JSON parser. Handles the
+// well-formed <think>...</think> pair and the lone </think> some endpoints
+// return when the opening tag was consumed as a special token.
+function stripReasoning(text: string): string {
+	let out = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+	const close = out.match(/<\/think(?:ing)?>/i);
+	if (close && close.index !== undefined) {
+		out = out.slice(close.index + close[0].length);
+	}
+	return out.trim();
+}
+
+// Scan from `start` (a '{') to its matching '}', ignoring braces inside strings.
+function balancedObjectFrom(text: string, start: number): string | null {
+	let depth = 0;
+	let inStr = false;
+	let esc = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		if (inStr) {
+			if (esc) esc = false;
+			else if (ch === '\\') esc = true;
+			else if (ch === '"') inStr = false;
+		} else if (ch === '"') inStr = true;
+		else if (ch === '{') depth++;
+		else if (ch === '}') {
+			depth--;
+			if (depth === 0) return text.slice(start, i + 1);
+		}
+	}
+	return null;
+}
+
+// First balanced {...} that actually carries a state key, so we don't grab
+// unrelated JSON the user may have pasted into the chat.
+function findStateObject(text: string): string | null {
+	for (let i = text.indexOf('{'); i !== -1; i = text.indexOf('{', i + 1)) {
+		const obj = balancedObjectFrom(text, i);
+		if (obj && STATE_KEY_RE.test(obj)) return obj;
+	}
+	return null;
+}
+
+// Tolerant parse for the JSON weaker models and non-conforming endpoints emit:
+// strips // and /* */ comments and trailing commas, then falls back to pulling
+// the first balanced object out of surrounding prose.
+function tryParseJson(text: string): LLMStateOutput | null {
+	const repaired = text
+		.replace(/\/\/[^\n\r]*/g, '')
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/,\s*([}\]])/g, '$1')
+		.trim();
+	try {
+		return JSON.parse(repaired) as LLMStateOutput;
+	} catch {
+		const obj = findStateObject(repaired);
+		if (obj && obj !== repaired) {
+			try {
+				return JSON.parse(obj) as LLMStateOutput;
+			} catch {
+				/* give up */
+			}
+		}
+		return null;
+	}
+}
+
 // Parse LLM response to extract dialogue and state updates
 export function parseResponse(rawResponse: string): ParsedResponse {
-	// Default result
-	let dialogue = rawResponse.trim();
+	const raw = stripReasoning(rawResponse);
+	let dialogue = raw.trim();
 	let stateUpdates: Partial<StateUpdates> | null = null;
 	let parseError: string | undefined;
 
-	// Try to extract JSON block
-	const jsonMatch = rawResponse.match(/```json\s*([\s\S]*?)\s*```/i);
-
-	if (jsonMatch) {
-		// Remove JSON block from dialogue
-		dialogue = rawResponse.replace(jsonMatch[0], '').trim();
-
-		try {
-			const parsed: LLMStateOutput = JSON.parse(jsonMatch[1]);
+	// Prefer a fenced ```json block; otherwise grab the first bare JSON object
+	// that carries a state key (models that skip the fence).
+	const fenced = raw.match(/```json\s*([\s\S]*?)\s*```/i);
+	if (fenced) {
+		const parsed = tryParseJson(fenced[1]);
+		if (parsed) {
 			stateUpdates = convertLLMOutput(parsed);
-		} catch (e) {
-			parseError = `Failed to parse JSON: ${e instanceof Error ? e.message : 'Unknown error'}`;
-			console.debug('Failed to parse LLM state updates:', e);
+		} else {
+			parseError = 'Failed to parse JSON state block';
+			console.debug('Failed to parse LLM state updates:', fenced[1]);
 		}
+		dialogue = raw.replace(fenced[0], '').trim();
 	} else {
-		// Try to find inline JSON (some models don't use code blocks)
-		const inlineJsonMatch = rawResponse.match(/\{[\s\S]*"(?:mood_change|affection_delta|trust_delta)"[\s\S]*\}/);
-		if (inlineJsonMatch) {
-			dialogue = rawResponse.replace(inlineJsonMatch[0], '').trim();
-			try {
-				const parsed: LLMStateOutput = JSON.parse(inlineJsonMatch[0]);
+		const obj = findStateObject(raw);
+		if (obj) {
+			const parsed = tryParseJson(obj);
+			if (parsed) {
 				stateUpdates = convertLLMOutput(parsed);
-			} catch (e) {
-				// Ignore parse errors for inline JSON - might be false positive
+				dialogue = raw.replace(obj, '').trim();
 			}
 		}
 	}
 
-	// Clean up dialogue
 	dialogue = cleanDialogue(dialogue);
-
 	return { dialogue, stateUpdates, parseError };
 }
 
@@ -86,8 +209,8 @@ function convertLLMOutput(output: LLMStateOutput): Partial<StateUpdates> {
 
 	// Convert mood change
 	if (output.mood_change) {
-		const emotion = output.mood_change.emotion?.toLowerCase() as Emotion;
-		if (VALID_EMOTIONS.includes(emotion)) {
+		const emotion = normalizeEmotion(output.mood_change.emotion);
+		if (emotion) {
 			updates.moodChange = {
 				emotion,
 				intensityDelta: clampDelta(output.mood_change.intensity_delta, -30, 30)
@@ -136,7 +259,11 @@ function clampDelta(value: number | undefined, min: number, max: number): number
 
 // Clean up dialogue text
 function cleanDialogue(text: string): string {
-	let cleaned = text;
+	// Cut runaway output at a leaked stop token and drop stray template tokens.
+	let cleaned = stripControlTokens(text);
+
+	// Cut if the model kept going as the user / a narrator instead of replying.
+	cleaned = cutHallucinatedTurn(cleaned);
 
 	// Remove any leftover JSON-like content
 	cleaned = cleaned.replace(/\{[^}]*"(?:mood|delta|emotion)[^}]*\}/gi, '');
