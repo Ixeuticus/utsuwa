@@ -1,5 +1,6 @@
 <script lang="ts">
 	import VrmScene from '$lib/components/vrm/VrmScene.svelte';
+	import { pop } from '$lib/utils/motion';
 	import BottomChatBar from '$lib/components/chat/BottomChatBar.svelte';
 	import SpeechBubble from '$lib/components/chat/SpeechBubble.svelte';
 	import FloatingChatIcon from '$lib/components/overlay/FloatingChatIcon.svelte';
@@ -404,7 +405,7 @@
 
 	<!-- Expandable Chat Bar -->
 	{#if chatExpanded}
-		<div class="chat-bar-container">
+		<div class="chat-bar-container" out:pop={{ base: 'translateX(-50%)', y: 10, duration: 180 }}>
 			<BottomChatBar onSend={handleSend} disabled={chatStore.isLoading} overlay />
 		</div>
 	{/if}
@@ -413,14 +414,14 @@
 	{#if chatStore.error}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="error-toast" onclick={() => chatStore.setError(null)}>
+		<div class="error-toast" out:pop={{ base: 'translateX(-50%)', y: 8, duration: 180 }} onclick={() => chatStore.setError(null)}>
 			<span>{chatStore.error}</span>
 		</div>
 	{/if}
 	{#if sttStore.error}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="error-toast" onclick={() => sttStore.clearError()}>
+		<div class="error-toast error-toast--stt" out:pop={{ base: 'translateX(-50%)', y: 8, duration: 180 }} onclick={() => sttStore.clearError()}>
 			<span>{sttStore.error}</span>
 		</div>
 	{/if}
@@ -466,18 +467,19 @@
 		right: 0.75rem;
 		width: 32px;
 		height: 32px;
-		border: none;
-		border-radius: 50%;
-		background: rgba(0, 0, 0, 0.5);
-		color: white;
+		border-radius: var(--radius-full);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		box-shadow: var(--shadow-sm);
 		z-index: 50;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity 0.15s ease, transform 0.15s ease;
+		transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease,
+			box-shadow 0.15s ease, transform 0.15s ease;
 	}
 
 	.overlay-container:hover .exit-btn {
@@ -487,6 +489,9 @@
 
 	.exit-btn:hover {
 		opacity: 1;
+		color: var(--text-primary);
+		background: color-mix(in srgb, var(--bg-tertiary), var(--text-primary) 8%);
+		box-shadow: var(--shadow-md);
 		transform: scale(1.1);
 	}
 
@@ -530,21 +535,22 @@
 		left: 50%;
 		transform: translateX(-50%);
 		padding: 0.5rem 0.875rem;
-		background: linear-gradient(180deg, #ff6b6b 0%, #ee5a5a 100%);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 12px;
-		color: white;
+		background: var(--color-error);
+		border: 1px solid transparent;
+		border-radius: var(--radius-lg);
+		color: #fff;
 		font-size: 0.75rem;
 		max-width: calc(100% - 2rem);
 		text-align: center;
 		cursor: pointer;
 		z-index: 50;
 		animation: slideUpShake 0.5s ease-out;
-		box-shadow:
-			0 4px 20px rgba(238, 90, 90, 0.4),
-			0 2px 4px rgba(0, 0, 0, 0.1),
-			inset 0 1px 0 rgba(255, 255, 255, 0.3);
-		text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--shadow-lg);
+	}
+
+	/* STT errors stack above chat errors instead of sharing the same slot */
+	.error-toast--stt {
+		bottom: 8.5rem;
 	}
 
 	@keyframes slideUpShake {

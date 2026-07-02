@@ -1,6 +1,5 @@
 <script lang="ts">
 	import VrmScene from '$lib/components/vrm/VrmScene.svelte';
-	import CompanionStatus from '$lib/components/ui/CompanionStatus.svelte';
 	import FloatingStatIndicators from '$lib/components/ui/FloatingStatIndicators.svelte';
 	import { TopRightButtons, TopLeftButtons, InfoModal } from '$lib/components/ui';
 	import BottomChatBar from '$lib/components/chat/BottomChatBar.svelte';
@@ -25,10 +24,12 @@
 	import { keepImage, type PreparedImage } from '$lib/services/storage/keepsakes';
 	import { type ContentPart, toOpenAIContent } from '$lib/services/chat/content';
 	import { isTauri } from '$lib/services/platform';
+	import { browser } from '$app/environment';
 	import type { TTSProvider } from '$lib/types';
 	import type { StateUpdates } from '$lib/types/character';
 	import type { EventDefinition } from '$lib/types/events';
 	import { onMount } from 'svelte';
+	import { pop, fadeFast } from '$lib/utils/motion';
 
 	// V2 companion system imports
 	import { buildSystemPrompt, buildExtractionSystemPrompt, type PromptContext } from '$lib/ai/prompt-builder';
@@ -131,11 +132,13 @@
 		return unsub;
 	});
 
-	// Check for first-run (onboarding)
+	// Check for first-run (onboarding). ?onboarding=1 force-opens it for testing
+	// without resetting the companion.
 	$effect(() => {
 		if (characterStore.isReady && !onboardingDismissed) {
+			const forced = browser && new URLSearchParams(window.location.search).has('onboarding');
 			const { lastInteraction, totalInteractions } = characterStore.state;
-			showOnboarding = lastInteraction === null && totalInteractions === 0;
+			showOnboarding = forced || (lastInteraction === null && totalInteractions === 0);
 		}
 	});
 
@@ -162,7 +165,7 @@
 		let llmUpdates = parsed.stateUpdates;
 
 		if (import.meta.env.DEV) {
-			console.log('%c[LLM raw response]', 'color:#01B2FF;font-weight:bold', companionResponse);
+			console.log('%c[LLM raw response]', 'color:#00b2ff;font-weight:bold', companionResponse);
 			console.log('%c[LLM parsed]', 'color:#22c55e;font-weight:bold', {
 				stateUpdates: llmUpdates,
 				new_memory: llmUpdates?.newMemory ?? null
@@ -490,8 +493,8 @@
 </script>
 
 <div class="app-container">
-	<TopLeftButtons onOpenMemoryGraph={() => showMemoryGraph = true} />
-	<TopRightButtons onInfoClick={() => showInfoModal = true} onBoardClick={() => showBoard = true} />
+	<TopLeftButtons onOpenMemoryGraph={() => showMemoryGraph = true} onBoardClick={() => showBoard = true} />
+	<TopRightButtons onInfoClick={() => showInfoModal = true} />
 	{#if showInfoModal}
 		<InfoModal onClose={() => showInfoModal = false} />
 	{/if}
@@ -506,7 +509,7 @@
 		<!-- VRM Stage (Full Background) -->
 		<div class="stage-container">
 			{#if vrmStore.isLoading || !vrmStore.modelUrl}
-				<div class="loading-dots">
+				<div class="loading-dots" out:fadeFast={{ duration: 300 }}>
 					<span class="dot"></span>
 					<span class="dot"></span>
 					<span class="dot"></span>
@@ -514,17 +517,24 @@
 			{/if}
 
 			{#if vrmStore.error}
-				<div class="error-toast" onclick={() => vrmStore.setError(null)}>
+				<div
+					class="error-toast"
+					out:pop={{ base: 'translateX(-50%)' }}
+					role="button"
+					tabindex="0"
+					onclick={() => vrmStore.setError(null)}
+					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); vrmStore.setError(null); } }}
+				>
 					<span>{vrmStore.error}</span>
 					<button type="button" class="toast-dismiss" aria-label="Dismiss">✕</button>
 				</div>
 			{/if}
 
-			<VrmScene />
+			<!-- The avatar resolves into focus once the model is ready -->
+			<div class="vrm-stage" class:is-loading={vrmStore.isLoading || !vrmStore.modelUrl}>
+				<VrmScene />
+			</div>
 		</div>
-
-		<!-- Companion Status (Top Left) - includes settings icons now -->
-		<CompanionStatus />
 
 		<!-- Floating Stat Indicators -->
 		<FloatingStatIndicators />
@@ -550,7 +560,14 @@
 
 		<!-- Error toast for chat errors -->
 		{#if chatStore.error}
-			<div class="chat-error-toast" onclick={() => chatStore.setError(null)}>
+			<div
+				class="chat-error-toast"
+				out:pop={{ base: 'translateX(-50%)' }}
+				role="button"
+				tabindex="0"
+				onclick={() => chatStore.setError(null)}
+				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); chatStore.setError(null); } }}
+			>
 				<span>{chatStore.error}</span>
 				<button type="button" class="toast-dismiss" aria-label="Dismiss">✕</button>
 			</div>
@@ -597,6 +614,20 @@
 		position: absolute;
 		inset: 0;
 		z-index: 0;
+	}
+
+	/* The scene sits blurred and dimmed while the model loads, then resolves
+	   into focus. Base state carries no filter so nothing lingers after. */
+	.vrm-stage {
+		height: 100%;
+		transition:
+			opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+			filter 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+	}
+
+	.vrm-stage.is-loading {
+		opacity: 0;
+		filter: blur(14px);
 	}
 
 	.loading-dots {
@@ -648,19 +679,15 @@
 		width: fit-content;
 		max-width: 600px;
 		padding: 0.75rem 1rem;
-		background: linear-gradient(180deg, #ff6b6b 0%, #ee5a5a 100%);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 16px;
-		color: white;
+		background: var(--color-error);
+		border: 1px solid transparent;
+		border-radius: var(--radius-lg);
+		color: #fff;
 		font-size: 0.875rem;
 		cursor: pointer;
 		z-index: 50;
 		animation: errorSlideDownShake 0.5s ease-out;
-		box-shadow:
-			0 4px 20px rgba(238, 90, 90, 0.4),
-			0 2px 4px rgba(0, 0, 0, 0.1),
-			inset 0 1px 0 rgba(255, 255, 255, 0.3);
-		text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--shadow-lg);
 	}
 
 	.error-toast span,
@@ -673,7 +700,7 @@
 		background: rgba(255, 255, 255, 0.2);
 		border: none;
 		padding: 0.25rem;
-		border-radius: 6px;
+		border-radius: var(--radius-sm);
 		cursor: pointer;
 		color: white;
 		opacity: 0.9;

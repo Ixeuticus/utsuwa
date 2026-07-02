@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { characterStore } from '$lib/stores/character.svelte';
 	import type { AppMode } from '$lib/types/character';
+	import { pop, fadeFast } from '$lib/utils/motion';
 
+	import './onboarding.css';
 	import WelcomeStep from './steps/WelcomeStep.svelte';
 	import CharacterStep from './steps/CharacterStep.svelte';
 	import AvatarStep from './steps/AvatarStep.svelte';
@@ -61,9 +63,9 @@
 	}
 </script>
 
-<div class="modal-overlay" onclick={handleComplete} role="presentation">
+<div class="modal-overlay" out:fadeFast={{ duration: 200 }} onclick={handleComplete} role="presentation">
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="modal-container" onclick={(e) => e.stopPropagation()}>
+	<div class="modal-container" out:pop={{ duration: 220, y: 12 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
 		<!-- Progress dots (hidden on complete step) -->
 		{#if currentStep !== 'complete'}
 			<div class="progress-dots">
@@ -77,8 +79,11 @@
 			</div>
 		{/if}
 
-		<!-- Step content -->
-		<div class="step-wrapper" class:slide-forward={direction === 'forward'} class:slide-back={direction === 'back'}>
+		<!-- Step content. Keyed so the slide animation replays on every step
+		     change, not just when the direction class flips. -->
+		<div class="step-wrapper">
+			{#key currentStep}
+			<div class="step-slide" class:slide-forward={direction === 'forward'} class:slide-back={direction === 'back'}>
 			{#if currentStep === 'welcome'}
 				<WelcomeStep onNext={goNext} />
 			{:else if currentStep === 'character'}
@@ -104,6 +109,8 @@
 			{:else if currentStep === 'complete'}
 				<CompleteStep characterName={characterName} onComplete={handleComplete} />
 			{/if}
+			</div>
+			{/key}
 		</div>
 	</div>
 </div>
@@ -112,9 +119,9 @@
 	.modal-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.3);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
+		background: rgba(28, 43, 51, 0.28);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -130,33 +137,20 @@
 
 	.modal-container {
 		position: relative;
-		background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%);
-		border: 1px solid rgba(255, 255, 255, 0.8);
+		background: var(--bg-primary);
 		border-radius: var(--radius-xl);
 		max-width: 440px;
 		width: 100%;
 		max-height: 85vh;
 		overflow: hidden;
-		animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-		box-shadow:
-			0 20px 60px rgba(0, 0, 0, 0.2),
-			0 8px 24px rgba(0, 0, 0, 0.15),
-			inset 0 1px 0 rgba(255, 255, 255, 0.9);
-	}
-
-	:global(.dark) .modal-container {
-		background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		box-shadow:
-			0 20px 60px rgba(0, 0, 0, 0.5),
-			0 8px 24px rgba(0, 0, 0, 0.4),
-			inset 0 1px 0 rgba(255, 255, 255, 0.1);
+		box-shadow: var(--shadow-xl);
+		animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
 	@keyframes slideUp {
 		from {
 			opacity: 0;
-			transform: translateY(24px) scale(0.96);
+			transform: translateY(16px) scale(0.98);
 		}
 		to {
 			opacity: 1;
@@ -168,67 +162,40 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 8px;
-		padding: 1.5rem 1.5rem 0.5rem;
+		gap: 6px;
+		padding: 1.75rem 1.5rem 0;
+		position: relative;
+		z-index: 1;
 	}
 
 	.dot {
-		width: 10px;
-		height: 10px;
+		width: 6px;
+		height: 6px;
 		border-radius: var(--radius-full);
-		background: linear-gradient(180deg, #e8e8e8 0%, #c8c8c8 100%);
+		background: var(--border-light);
 		transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.7),
-			0 1px 3px rgba(0, 0, 0, 0.2);
 	}
 
 	.dot.active {
-		width: 32px;
-		background: linear-gradient(180deg, #4dd0ff 0%, #01B2FF 50%, #0099dd 100%);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.5),
-			0 0 16px rgba(1, 178, 255, 0.5),
-			0 2px 4px rgba(0, 0, 0, 0.15);
+		width: 22px;
+		background: var(--accent);
 	}
 
 	.dot.completed {
-		background: linear-gradient(180deg, #a0a0a0 0%, #808080 100%);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.3),
-			0 1px 2px rgba(0, 0, 0, 0.15);
-	}
-
-	:global(.dark) .dot {
-		background: linear-gradient(180deg, #404040 0%, #2a2a2a 100%);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.1),
-			0 1px 3px rgba(0, 0, 0, 0.4);
-	}
-
-	:global(.dark) .dot.active {
-		background: linear-gradient(180deg, #4dd0ff 0%, #01B2FF 50%, #0099dd 100%);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.4),
-			0 0 20px rgba(1, 178, 255, 0.6),
-			0 2px 4px rgba(0, 0, 0, 0.3);
-	}
-
-	:global(.dark) .dot.completed {
-		background: linear-gradient(180deg, #606060 0%, #404040 100%);
+		background: var(--accent);
 	}
 
 	.step-wrapper {
 		overflow-y: auto;
-		max-height: calc(85vh - 3.5rem);
+		max-height: calc(85vh - 3rem);
 	}
 
-	.step-wrapper.slide-forward {
-		animation: slideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+	.step-slide.slide-forward {
+		animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
-	.step-wrapper.slide-back {
-		animation: slideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+	.step-slide.slide-back {
+		animation: slideInLeft 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
 	@keyframes slideInRight {
