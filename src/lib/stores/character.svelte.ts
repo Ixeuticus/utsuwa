@@ -1,6 +1,5 @@
 import {
 	type CharacterState,
-	type MoodState,
 	type StateUpdates,
 	type RelationshipStage,
 	type PersonaExtensions,
@@ -49,15 +48,6 @@ function createCharacterStore() {
 	// Affection as percentage (0-100)
 	const affectionPercent = $derived.by(() => {
 		return Math.min(100, Math.floor((state?.affection ?? 0) / 10));
-	});
-
-	// Overall "health" score (weighted average of stats)
-	const overallHealth = $derived.by(() => {
-		if (!state) return 50;
-		const energy = state.energy;
-		const trust = state.trust;
-		const comfort = state.comfort;
-		return Math.round(energy * 0.3 + trust * 0.35 + comfort * 0.35);
 	});
 
 	// Load state from IndexedDB
@@ -239,16 +229,6 @@ function createCharacterStore() {
 		save();
 	}
 
-	// Set mood directly
-	function setMood(mood: MoodState): void {
-		state = {
-			...state,
-			mood,
-			updatedAt: new Date()
-		};
-		save();
-	}
-
 	// Set relationship stage
 	function setRelationshipStage(stage: RelationshipStage): void {
 		state = {
@@ -304,10 +284,19 @@ function createCharacterStore() {
 		return state?.completedEvents.includes(eventId) ?? false;
 	}
 
+	// Format a date as local YYYY-MM-DD (toISOString would use UTC day boundaries,
+	// which breaks streaks for anyone chatting across a UTC midnight)
+	function localDateKey(date: Date): string {
+		const y = date.getFullYear();
+		const m = String(date.getMonth() + 1).padStart(2, '0');
+		const d = String(date.getDate()).padStart(2, '0');
+		return `${y}-${m}-${d}`;
+	}
+
 	// Update streak (call on session start)
 	function updateStreak(): void {
-		const today = new Date().toISOString().split('T')[0];
-		const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+		const today = localDateKey(new Date());
+		const yesterday = localDateKey(new Date(Date.now() - 86400000));
 
 		let newStreak = state.currentStreak;
 		let newLongest = state.longestStreak;
@@ -411,9 +400,6 @@ function createCharacterStore() {
 		get affectionPercent() {
 			return affectionPercent;
 		},
-		get overallHealth() {
-			return overallHealth;
-		},
 		get appMode() {
 			return state.appMode;
 		},
@@ -434,7 +420,6 @@ function createCharacterStore() {
 		save,
 		updatePersona,
 		applyUpdates,
-		setMood,
 		setRelationshipStage,
 		setAppMode,
 		markEventCompleted,

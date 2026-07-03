@@ -13,7 +13,6 @@
 	let query = $state('');
 	let results = $state<Array<{ url: string; title: string; excerpt: string }>>([]);
 	let isOpen = $state(false);
-	let isLoading = $state(false);
 	let selectedIndex = $state(0);
 	let pagefind = $state<any>(null);
 	let inputEl = $state<HTMLInputElement | null>(null);
@@ -32,7 +31,12 @@
 		}
 	}
 
+	// Guards against a slow earlier search resolving after a faster later one
+	let searchToken = 0;
+
 	async function search(q: string) {
+		const token = ++searchToken;
+
 		if (!q.trim()) {
 			results = [];
 			return;
@@ -55,6 +59,7 @@
 				};
 			})
 		);
+		if (token !== searchToken) return;
 		results = items;
 		selectedIndex = 0;
 	}
@@ -129,7 +134,7 @@
 		}
 	});
 
-	const showDropdown = $derived(isOpen && (query.trim().length > 0 || isLoading));
+	const showDropdown = $derived(isOpen && query.trim().length > 0);
 	const isDev = $derived(browser && window.location.hostname === 'localhost');
 </script>
 
@@ -157,8 +162,6 @@
 		<div class="search-dropdown">
 			{#if isDev && !pagefind}
 				<div class="search-message">Search available in production build</div>
-			{:else if isLoading}
-				<div class="search-message">Loading...</div>
 			{:else if results.length === 0 && query.trim()}
 				<div class="search-message">No results for "{query}"</div>
 			{:else}
