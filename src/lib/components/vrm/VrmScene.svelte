@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Canvas } from '@threlte/core';
-	import { WebGLRenderer, SRGBColorSpace, ACESFilmicToneMapping } from 'three';
+	import { WebGLRenderer, SRGBColorSpace, NoToneMapping } from 'three';
 	import { onMount } from 'svelte';
 	import Scene from './Scene.svelte';
 	import { vrmStore } from '$lib/stores/vrm.svelte';
@@ -34,8 +34,7 @@
 		});
 
 		renderer.outputColorSpace = SRGBColorSpace;
-		renderer.toneMapping = ACESFilmicToneMapping;
-		renderer.toneMappingExposure = 1.0;
+		renderer.toneMapping = NoToneMapping;
 
 		return renderer;
 	}
@@ -43,19 +42,22 @@
 	onMount(() => {
 		mounted = true;
 
-		// Pre-generate thumbnails for models without previews on first load
-		const modelsNeedingThumbnails = vrmStore.models.filter((m) => !m.previewUrl);
-		if (modelsNeedingThumbnails.length > 0) {
-			preGenerateThumbnails(modelsNeedingThumbnails, (modelId, dataUrl) => {
-				vrmStore.setModelPreview(modelId, dataUrl);
-			});
-		}
+		// Pre-generate thumbnails for models without previews. Wait for storage
+		// init first, otherwise saved previews look missing and get regenerated.
+		vrmStore.whenReady().then(() => {
+			const modelsNeedingThumbnails = vrmStore.models.filter((m) => !m.previewUrl);
+			if (modelsNeedingThumbnails.length > 0) {
+				preGenerateThumbnails(modelsNeedingThumbnails, (modelId, dataUrl) => {
+					vrmStore.setModelPreview(modelId, dataUrl);
+				});
+			}
+		});
 	});
 </script>
 
 <div class="vrm-scene">
 	{#if mounted}
-		<Canvas {createRenderer}>
+		<Canvas {createRenderer} toneMapping={NoToneMapping}>
 			<Scene {centered} {locked} {overlay} />
 		</Canvas>
 	{/if}
