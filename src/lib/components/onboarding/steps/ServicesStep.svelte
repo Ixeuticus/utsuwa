@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Icon, ProviderDropdown, ModelDropdown } from '$lib/components/ui';
+	import { Icon, ProviderDropdown, ModelDropdown, ContextSizeSlider } from '$lib/components/ui';
 	import { modulesStore } from '$lib/stores/modules.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { getLLMProvider, getTTSProvider } from '$lib/services/providers/registry';
@@ -17,10 +17,15 @@
 
 	let { onNext, onBack }: Props = $props();
 
+	function handleContextSizeChange(value: number | undefined) {
+		modulesStore.setModuleSetting('consciousness', 'contextSize', value);
+	}
+
 	// LLM State
 	const llmSettings = $derived(modulesStore.getModuleSettings('consciousness'));
 	const llmProvider = $derived(getLLMProvider(llmSettings.activeProvider as string));
 	const staticLLMModels = $derived(llmProvider?.models ?? []);
+	const llmContextSize = $derived(llmSettings.contextSize as number | undefined);
 
 	// Dynamic model fetching state for LLM
 	let llmIsLoading = $state(false);
@@ -408,6 +413,13 @@
 				disabledMessage="Enter API key first"
 			/>
 		{/if}
+
+		<!-- Context Window -->
+		<ContextSizeSlider
+			contextSize={llmContextSize}
+			onChange={handleContextSizeChange}
+			id="ob-llm-context-size-toggle"
+		/>
 	</div>
 
 	<!-- TTS Section -->
@@ -732,4 +744,5 @@
 		font-size: 0.8rem;
 		color: var(--text-tertiary);
 	}
+
 </style>

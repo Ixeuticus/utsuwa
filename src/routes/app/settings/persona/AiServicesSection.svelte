@@ -2,10 +2,14 @@
 	import { slideOpen } from '$lib/utils/motion';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { getLLMProvider, getTTSProvider } from '$lib/services/providers/registry';
-	import { Icon, ProviderDropdown, ModelDropdown } from '$lib/components/ui';
+	import { Icon, ProviderDropdown, ModelDropdown, ContextSizeSlider } from '$lib/components/ui';
 	import type { PersonaPageState } from './persona-page.svelte';
 
 	let { page }: { page: PersonaPageState } = $props();
+
+	function handleContextSizeChange(value: number | undefined) {
+		page.handleLLMNumberSetting('contextSize', value);
+	}
 </script>
 
 <!-- AI Services (collapsible) -->
@@ -215,6 +219,13 @@
 								disabledMessage="Enter API key first"
 							/>
 						{/if}
+
+						<!-- Context Window -->
+						<ContextSizeSlider
+							contextSize={page.consciousnessSettings.contextSize as number | undefined}
+							onChange={handleContextSizeChange}
+							id="llm-context-size-toggle"
+						/>
 					{/if}
 				{/if}
 			</div>

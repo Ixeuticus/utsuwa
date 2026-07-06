@@ -315,6 +315,18 @@ The system prompt is built from 5 layers:
 4. **Memory** — Recent conversation turns, relevant facts, session context
 5. **Instructions** — Stage-specific behavior guidance, JSON output format
 
+### Context Window and Memory Budget
+
+The LLM settings expose a **Context Window** slider that tells Utsuwa how many tokens the selected model can process. This value is used in three places:
+
+1. **Memory retrieval** — `retrieveRelevantContext` asks working memory for up to the budgeted number of recent turns. Without a context window configured it falls back to 10 turns; with a large window configured it retrieves up to 20, so the larger budget is actually used.
+
+2. **Memory injection** — The prompt builder injects only the budgeted number of recent conversation turns and relevant facts. Small local models (1K–4K tokens) receive a minimal memory layer so the system prompt itself does not overflow the window. Larger models receive more turns and facts up to a reasonable ceiling.
+
+3. **History truncation** — Before a request is sent, the assembled messages are trimmed so the system prompt plus conversation history plus a small reserve for the model's response fit inside the configured window. Truncation always keeps the system prompt and the user's newest message; older history is dropped first.
+
+The reserve and scaling are intentionally conservative. If the system prompt alone is larger than the window, Utsuwa still keeps the newest user message and lets the provider handle the overflow rather than silently dropping the user's current turn.
+
 ### LLM Output Format
 
 The companion uses a **two-path state extraction** model, so it stays reliable across everything from GPT-4o down to a 4B local model:
