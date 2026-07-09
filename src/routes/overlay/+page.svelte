@@ -21,9 +21,12 @@
 	import { personaStore } from '$lib/stores/persona.svelte';
 	import { overlayStore } from '$lib/stores/overlay.svelte';
 	import { isTauri, startDragging } from '$lib/services/platform';
-	import { sendCompanionMessage } from '$lib/services/chat/companion-chat';
+	import { sendCompanionMessage, type SendCompanionMessageOptions } from '$lib/services/chat/companion-chat';
+	import { sendReminderMessage } from '$lib/services/chat/reminder-chat';
+	import { type PreparedImage } from '$lib/services/storage/keepsakes';
 	import { eventsApi } from '$lib/engine/events';
 	import { completionMarkers } from '$lib/engine/event-completion';
+	import { reminderStore } from '$lib/stores/reminders.svelte';
 	import type { EventDefinition } from '$lib/types/events';
 	import type { StateUpdates } from '$lib/types/character';
 
@@ -168,6 +171,21 @@
 			activeEvent = debugEvent;
 		}
 	});
+	// Start reminder polling in the overlay too, so timers fire even when the
+	// main app window is hidden. Fired reminders are sent back through the LLM
+	// so the companion can react (speech, search, etc.).
+	$effect(() => {
+		const unsubscribeReminder = reminderStore.addReminderFiredListener((reminder) => {
+			const msg = `⏰ REMINDER TRIGGERED: "${reminder.content}" — This is your reminder. React to it NOW by performing the described action or saying something enthusiastic and fitting.`;
+			sendReminderMessage((content, options) => handleReminderSend(content, options), msg);
+		});
+		reminderStore.startPolling();
+		return () => {
+			reminderStore.stopPolling();
+			unsubscribeReminder();
+		};
+	});
+
 
 	// Handle drag for Tauri window
 	function handleDragStart(e: MouseEvent) {
@@ -204,13 +222,23 @@
 
 	// Send a message through the shared companion pipeline. The overlay collapses
 	// its chat on send and has no image path.
-	async function handleSend(content: string) {
-		await sendCompanionMessage(content, [], {
+	async function handleSend(content: string, images: PreparedImage[] = []) {
+		await sendCompanionMessage(content, images, {
 			setTyping: (v) => (isTyping = v),
 			setLatestResponse: (v) => (latestResponse = v),
 			setActiveEvent: (e) => (activeEvent = e),
 			beforeStream: () => overlayStore.setChatExpanded(false)
 		});
+	}
+
+	// Send a fired reminder through the overlay pipeline as a system event.
+	async function handleReminderSend(content: string, options?: SendCompanionMessageOptions) {
+		await sendCompanionMessage(content, [], {
+			setTyping: (v) => (isTyping = v),
+			setLatestResponse: (v) => (latestResponse = v),
+			setActiveEvent: (e) => (activeEvent = e),
+			beforeStream: () => overlayStore.setChatExpanded(false)
+		}, options);
 	}
 
 	function handleBubbleHide() {

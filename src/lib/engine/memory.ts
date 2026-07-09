@@ -27,6 +27,11 @@ let workingMemory: WorkingMemory = {
 	messageCount: 0
 };
 
+// Expose read-only access to the current working memory state
+export function getWorkingMemory(): WorkingMemory {
+	return workingMemory;
+}
+
 // Add a turn to working memory
 export function addTurnToWorkingMemory(turn: Omit<ConversationTurn, 'id'>): void {
 	workingMemory.turns.push({
@@ -47,7 +52,7 @@ let currentSessionTurnCount = 0;
 
 // Open a session for this run on first use, so persisted turns can be grouped
 // and "last time you talked" style context has something to read.
-async function ensureSession(): Promise<number | undefined> {
+export async function ensureSession(): Promise<number | undefined> {
 	if (workingMemory.currentSessionId !== undefined) return workingMemory.currentSessionId;
 	try {
 		const session = await memoryApi.createSession();
@@ -98,6 +103,14 @@ export async function hydrateWorkingMemory(): Promise<void> {
 	const recentTurns = await memoryStorage.getConversationTurns({ limit: 20 });
 	workingMemory.turns = recentTurns;
 	workingMemory.messageCount = recentTurns.length;
+
+	// Restore the current session from the most recent turn so reminders and
+	// other session-scoped state survive a browser restart.
+	const latestTurn = recentTurns[recentTurns.length - 1];
+	if (latestTurn?.sessionId !== undefined) {
+		workingMemory.currentSessionId = latestTurn.sessionId;
+		workingMemory.sessionStartedAt = latestTurn.createdAt;
+	}
 
 	// Backfill summaries for past sessions that ended without one, so the
 	// "last time you talked" prompt context actually has something to read.

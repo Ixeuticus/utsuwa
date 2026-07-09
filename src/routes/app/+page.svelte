@@ -19,7 +19,9 @@
 	import { isLocalLLMProvider } from '$lib/services/providers/local-endpoints';
 	import { canShowImages } from '$lib/services/providers/vision';
 	import { onDestroy } from 'svelte';
-	import { sendCompanionMessage } from '$lib/services/chat/companion-chat';
+	import { sendCompanionMessage, type SendCompanionMessageOptions } from '$lib/services/chat/companion-chat';
+	import { sendReminderMessage } from '$lib/services/chat/reminder-chat';
+	import { reminderStore } from '$lib/stores/reminders.svelte';
 	import { type PreparedImage } from '$lib/services/storage/keepsakes';
 	import { isTauri } from '$lib/services/platform';
 	import { browser } from '$app/environment';
@@ -122,6 +124,21 @@
 		}
 	});
 
+	// Start reminder polling and react to fired reminders by sending them back
+	// through the companion pipeline. This lets the LLM decide the action
+	// (speech, web search, etc.) instead of showing a passive toast.
+	$effect(() => {
+		const unsubscribeReminder = reminderStore.addReminderFiredListener((reminder) => {
+			const msg = `⏰ REMINDER TRIGGERED: "${reminder.content}" — This is your reminder. React to it NOW by performing the described action or saying something enthusiastic and fitting.`;
+			sendReminderMessage((content) => handleSend(content), msg);
+		});
+		reminderStore.startPolling();
+		return () => {
+			reminderStore.stopPolling();
+			unsubscribeReminder();
+		};
+	});
+
 	// Shown-image previews are blob: URLs (shared between the chat history and the
 	// thinking overlay). Free them all when leaving the app so a long session's
 	// images don't linger in memory.
@@ -134,14 +151,18 @@
 
 
 	// Send a message through the shared companion pipeline.
-	async function handleSend(content: string, images: PreparedImage[] = []) {
+	async function handleSend(
+		content: string,
+		images: PreparedImage[] = [],
+		options?: SendCompanionMessageOptions
+	) {
 		await sendCompanionMessage(content, images, {
 			setTyping: (v) => (isTyping = v),
 			setLatestResponse: (v) => (latestResponse = v),
 			setActiveEvent: (e) => (activeEvent = e),
 			onShownImages: (shown) => (thinkingImages = shown),
 			onNewMemory: (m) => (lastNewMemory = m)
-		});
+		}, options);
 	}
 
 	// Handle speech bubble hide
@@ -190,7 +211,13 @@
 
 <div class="app-container">
 	<TopLeftButtons onOpenMemoryGraph={() => showMemoryGraph = true} onBoardClick={() => showBoard = true} />
-	<TopRightButtons onInfoClick={() => showInfoModal = true} />
+	<TopRightButtons
+		onInfoClick={() => showInfoModal = true}
+		upcomingReminders={reminderStore.upcoming}
+		onDeleteReminder={reminderStore.deleteReminder}
+		recentFired={reminderStore.recentFired}
+		onDismissRecentFired={reminderStore.dismissRecentFired}
+	/>
 	{#if showInfoModal}
 		<InfoModal onClose={() => showInfoModal = false} />
 	{/if}
