@@ -1,44 +1,30 @@
 import { browser } from '$app/environment';
+import { clampPhysicsIntensity, PHYSICS_INTENSITY_DEFAULT } from '../engine/spring-physics.ts';
 import {
-	clampPhysicsIntensity,
-	PHYSICS_INTENSITY_DEFAULT
-} from '$lib/engine/spring-physics';
-import { sanitizeSceneBackground, type SceneBackground } from '$lib/services/scene-backgrounds';
+	CAMERA_DEFAULTS,
+	CAMERA_LIMITS,
+	DEFAULT_CHAT_DISPLAY_MODE,
+	DEFAULT_SIDEBAR_POSITION,
+	type CameraSettings,
+	type CameraProfile,
+	type ChatDisplayMode,
+	type SidebarPosition
+} from './display-types';
+import { parseDisplaySettings, sanitizeCamera } from './display-parser';
+import {
+	resetChatDisplay as computeResetChatDisplay,
+	setChatDisplayMode as computeSetChatDisplayMode,
+	setSidebarPosition as computeSetSidebarPosition
+} from './display-store-logic';
+import {
+	sanitizeSceneBackground,
+	type SceneBackground
+} from '../services/scene-backgrounds.ts';
 
 const STORAGE_KEY = 'utsuwa-display';
 
-export interface CameraSettings {
-	/** Vertical field of view in degrees */
-	fov: number;
-	/** Multiplier on the auto-fitted distance: >1 is closer, <1 is farther */
-	zoom: number;
-	/** Vertical offset in meters added to the auto-fitted look-at target */
-	height: number;
-}
-
-export type CameraProfile = 'main' | 'overlay';
-
-export const CAMERA_DEFAULTS: CameraSettings = { fov: 35, zoom: 1, height: 0 };
-
-export const CAMERA_LIMITS = {
-	fov: { min: 20, max: 60 },
-	zoom: { min: 0.5, max: 2.5 },
-	height: { min: -0.5, max: 0.5 }
-} as const;
-
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-function sanitize(raw: Partial<CameraSettings> | undefined): CameraSettings {
-	return {
-		fov: clamp(raw?.fov ?? CAMERA_DEFAULTS.fov, CAMERA_LIMITS.fov.min, CAMERA_LIMITS.fov.max),
-		zoom: clamp(raw?.zoom ?? CAMERA_DEFAULTS.zoom, CAMERA_LIMITS.zoom.min, CAMERA_LIMITS.zoom.max),
-		height: clamp(
-			raw?.height ?? CAMERA_DEFAULTS.height,
-			CAMERA_LIMITS.height.min,
-			CAMERA_LIMITS.height.max
-		)
-	};
-}
+export type { CameraSettings, CameraProfile, ChatDisplayMode, SidebarPosition };
+export { CAMERA_DEFAULTS, CAMERA_LIMITS, DEFAULT_CHAT_DISPLAY_MODE, DEFAULT_SIDEBAR_POSITION };
 
 function createDisplayStore() {
 	// The main scene and the desktop overlay window frame very differently,
@@ -50,28 +36,20 @@ function createDisplayStore() {
 	// Persistent backdrop for the regular scene ('default' = the theme backdrop)
 	let sceneBackground = $state<SceneBackground>({ type: 'default' });
 
+	// Chat display mode and sidebar docking
+	let chatDisplayMode = $state<ChatDisplayMode>(DEFAULT_CHAT_DISPLAY_MODE);
+	let sidebarPosition = $state<SidebarPosition>(DEFAULT_SIDEBAR_POSITION);
+
 	if (browser) {
 		const saved = localStorage.getItem(STORAGE_KEY);
 		if (saved) {
-			try {
-				const parsed = JSON.parse(saved);
-				if (parsed.camera) {
-					camera = sanitize(parsed.camera);
-					overlayCamera = sanitize(parsed.overlayCamera);
-				}
-				// Legacy setting predating auto-fit: old default distance was 2.0
-				else if (typeof parsed.cameraDistance === 'number') {
-					camera = sanitize({ zoom: 2.0 / parsed.cameraDistance });
-				}
-				if (typeof parsed.physicsIntensity === 'number') {
-					physicsIntensity = clampPhysicsIntensity(parsed.physicsIntensity);
-				}
-				if (parsed.sceneBackground) {
-					sceneBackground = sanitizeSceneBackground(parsed.sceneBackground);
-				}
-			} catch (e) {
-				console.error('Failed to load display settings:', e);
-			}
+			const parsed = parseDisplaySettings(saved);
+			camera = parsed.camera;
+			overlayCamera = parsed.overlayCamera;
+			physicsIntensity = parsed.physicsIntensity;
+			sceneBackground = parsed.sceneBackground;
+			chatDisplayMode = parsed.chatDisplayMode;
+			sidebarPosition = parsed.sidebarPosition;
 		}
 	}
 
@@ -79,11 +57,13 @@ function createDisplayStore() {
 		if (browser) {
 			localStorage.setItem(
 				STORAGE_KEY,
-			JSON.stringify({
+				JSON.stringify({
 					camera: $state.snapshot(camera),
 					overlayCamera: $state.snapshot(overlayCamera),
 					physicsIntensity,
-					sceneBackground: $state.snapshot(sceneBackground)
+					sceneBackground: $state.snapshot(sceneBackground),
+					chatDisplayMode,
+					sidebarPosition
 				})
 			);
 		}
@@ -91,7 +71,7 @@ function createDisplayStore() {
 
 	function setCamera(update: Partial<CameraSettings>, profile: CameraProfile = 'main') {
 		const current = profile === 'overlay' ? overlayCamera : camera;
-		const next = sanitize({ ...current, ...update });
+		const next = sanitizeCamera({ ...current, ...update });
 		if (profile === 'overlay') {
 			overlayCamera = next;
 		} else {
@@ -119,6 +99,27 @@ function createDisplayStore() {
 		save();
 	}
 
+	function setChatDisplayMode(mode: ChatDisplayMode) {
+		const next = computeSetChatDisplayMode({ chatDisplayMode, sidebarPosition }, mode);
+		chatDisplayMode = next.chatDisplayMode;
+		sidebarPosition = next.sidebarPosition;
+		save();
+	}
+
+	function setSidebarPosition(pos: SidebarPosition) {
+		const next = computeSetSidebarPosition({ chatDisplayMode, sidebarPosition }, pos);
+		chatDisplayMode = next.chatDisplayMode;
+		sidebarPosition = next.sidebarPosition;
+		save();
+	}
+
+	function resetChatDisplay() {
+		const next = computeResetChatDisplay();
+		chatDisplayMode = next.chatDisplayMode;
+		sidebarPosition = next.sidebarPosition;
+		save();
+	}
+
 	return {
 		get camera() {
 			return camera;
@@ -132,10 +133,19 @@ function createDisplayStore() {
 		get sceneBackground() {
 			return sceneBackground;
 		},
+		get chatDisplayMode() {
+			return chatDisplayMode;
+		},
+		get sidebarPosition() {
+			return sidebarPosition;
+		},
 		setCamera,
 		resetCamera,
 		setPhysicsIntensity,
-		setSceneBackground
+		setSceneBackground,
+		setChatDisplayMode,
+		setSidebarPosition,
+		resetChatDisplay
 	};
 }
 

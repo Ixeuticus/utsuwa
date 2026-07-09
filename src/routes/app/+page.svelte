@@ -8,7 +8,6 @@
 	import PhotoFramePreview from '$lib/components/photomode/PhotoFramePreview.svelte';
 	import { photomodeStore, PHOTO_FILTERS } from '$lib/stores/photomode.svelte';
 	import { backgroundToCss, type SceneBackground } from '$lib/services/scene-backgrounds';
-	import { displayStore } from '$lib/stores/display.svelte';
 
 	// Live preview filter shared with the capture composite
 	const photoFilterCss = $derived(
@@ -27,6 +26,7 @@
 		return null;
 	});
 	import SpeechBubble from '$lib/components/chat/SpeechBubble.svelte';
+	import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte';
 	import ThinkingImages from '$lib/components/chat/ThinkingImages.svelte';
 	import Photoboard from '$lib/components/chat/Photoboard.svelte';
 	import { EventScene } from '$lib/components/events';
@@ -37,6 +37,7 @@
 	import { modulesStore } from '$lib/stores/modules.svelte';
 	import { characterStore } from '$lib/stores/character.svelte';
 	import { personaStore } from '$lib/stores/persona.svelte';
+	import { displayStore } from '$lib/stores/display.svelte';
 	import { debugEventsStore } from '$lib/stores/debugEvents.svelte';
 	import { getLLMProvider, providerSupportsVision } from '$lib/services/providers/registry';
 	import { isLocalLLMProvider } from '$lib/services/providers/local-endpoints';
@@ -83,6 +84,27 @@
 	// Speech bubble state
 	let latestResponse = $state('');
 	let isTyping = $state(false);
+	// Chat sidebar state — start open when sidebar mode is enabled
+	let sidebarOpen = $state(
+		displayStore.chatDisplayMode === 'sidebar' || displayStore.chatDisplayMode === 'both'
+	);
+
+	// In sidebar-only mode the panel is the only place a reply can appear, so a
+	// closed panel reopens when she starts responding; you should never miss
+	// her answer. In 'both' mode the 3D bubble already shows it, so a manual
+	// close is respected.
+	$effect(() => {
+		if (isTyping && displayStore.chatDisplayMode === 'sidebar' && !sidebarOpen) {
+			sidebarOpen = true;
+		}
+	});
+
+	const showBubble = $derived(
+		displayStore.chatDisplayMode === 'bubble' || displayStore.chatDisplayMode === 'both'
+	);
+	const showSidebarTrigger = $derived(
+		displayStore.chatDisplayMode === 'sidebar' || displayStore.chatDisplayMode === 'both'
+	);
 	// Images she's currently being shown, floated above her head while she thinks
 	let thinkingImages = $state<{ id: string; url: string }[]>([]);
 
@@ -232,7 +254,7 @@
 </script>
 
 <div class="app-container">
-	{#if !photomodeStore.active}
+{#if !photomodeStore.active}
 		<TopLeftButtons onOpenMemoryGraph={() => showMemoryGraph = true} onBoardClick={() => showBoard = true} />
 		<TopRightButtons
 			onInfoClick={() => showInfoModal = true}
@@ -240,6 +262,8 @@
 			onDeleteReminder={reminderStore.deleteReminder}
 			recentFired={reminderStore.recentFired}
 			onDismissRecentFired={reminderStore.dismissRecentFired}
+			sidebarOpen={sidebarOpen && showSidebarTrigger}
+			onSidebarToggle={() => sidebarOpen = !sidebarOpen}
 		/>
 	{/if}
 	{#if showInfoModal}
@@ -320,11 +344,20 @@
 			<!-- Floating Stat Indicators -->
 			<FloatingStatIndicators />
 
-			<!-- Speech Bubble (shows latest response, click to dismiss) -->
+		<!-- Speech Bubble (shows latest response, click to dismiss) -->
+			{#if showBubble}
 			<SpeechBubble
 				message={latestResponse}
 				isTyping={isTyping}
 				onHide={handleBubbleHide}
+			/>
+		{/if}
+
+			<!-- Chat History Sidebar (hides with the rest of the chat UI in photo mode) -->
+			<ChatSidebar
+				open={sidebarOpen && showSidebarTrigger}
+				onClose={() => sidebarOpen = false}
+				{isTyping}
 			/>
 
 			<!-- The image she's being shown, floated above her head while she considers it -->
