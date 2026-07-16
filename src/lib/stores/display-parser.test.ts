@@ -7,7 +7,9 @@ import {
 	CAMERA_DEFAULTS,
 	CAMERA_LIMITS,
 	DEFAULT_CHAT_DISPLAY_MODE,
-	DEFAULT_SIDEBAR_POSITION
+	DEFAULT_SIDEBAR_POSITION,
+	DEFAULT_TYPING_INDICATOR_DELAY_MS,
+	DEFAULT_WAIT_TONE_ENABLED
 } from './display-types.ts';
 
 test('returns defaults for null input', () => {
@@ -17,6 +19,8 @@ test('returns defaults for null input', () => {
 	assert.equal(result.physicsIntensity, PHYSICS_INTENSITY_DEFAULT);
 	assert.equal(result.chatDisplayMode, DEFAULT_CHAT_DISPLAY_MODE);
 	assert.equal(result.sidebarPosition, DEFAULT_SIDEBAR_POSITION);
+	assert.equal(result.waitToneEnabled, DEFAULT_WAIT_TONE_ENABLED);
+	assert.equal(result.typingIndicatorDelayMs, DEFAULT_TYPING_INDICATOR_DELAY_MS);
 });
 
 test('returns defaults for invalid JSON string', () => {
@@ -76,6 +80,8 @@ test('falls back to defaults for missing fields', () => {
 	assert.equal(result.physicsIntensity, PHYSICS_INTENSITY_DEFAULT);
 	assert.equal(result.chatDisplayMode, DEFAULT_CHAT_DISPLAY_MODE);
 	assert.equal(result.sidebarPosition, DEFAULT_SIDEBAR_POSITION);
+	assert.equal(result.waitToneEnabled, DEFAULT_WAIT_TONE_ENABLED);
+	assert.equal(result.typingIndicatorDelayMs, DEFAULT_TYPING_INDICATOR_DELAY_MS);
 });
 
 test('ignores invalid chat display mode values', () => {
@@ -136,4 +142,48 @@ test('sanitizeCamera fills missing values from defaults', () => {
 	assert.equal(sanitized.fov, CAMERA_DEFAULTS.fov);
 	assert.equal(sanitized.zoom, 2.0);
 	assert.equal(sanitized.height, CAMERA_DEFAULTS.height);
+});
+
+test('defaults waitToneEnabled to false when missing', () => {
+	const result = parseDisplaySettings({});
+	assert.equal(result.waitToneEnabled, DEFAULT_WAIT_TONE_ENABLED);
+});
+
+test('parses waitToneEnabled when present', () => {
+	const enabled = parseDisplaySettings({ waitToneEnabled: true });
+	assert.equal(enabled.waitToneEnabled, true);
+
+	const disabled = parseDisplaySettings({ waitToneEnabled: false });
+	assert.equal(disabled.waitToneEnabled, false);
+});
+
+test('ignores non-boolean waitToneEnabled values', () => {
+	const result = parseDisplaySettings({ waitToneEnabled: 'yes' });
+	assert.equal(result.waitToneEnabled, DEFAULT_WAIT_TONE_ENABLED);
+});
+
+test('defaults typingIndicatorDelayMs to 0 when missing', () => {
+	const result = parseDisplaySettings({});
+	assert.equal(result.typingIndicatorDelayMs, DEFAULT_TYPING_INDICATOR_DELAY_MS);
+});
+
+test('parses and clamps typingIndicatorDelayMs', () => {
+	const result = parseDisplaySettings({ typingIndicatorDelayMs: 1500 });
+	assert.equal(result.typingIndicatorDelayMs, 1500);
+
+	const negative = parseDisplaySettings({ typingIndicatorDelayMs: -500 });
+	assert.equal(negative.typingIndicatorDelayMs, 0);
+
+	const tooLarge = parseDisplaySettings({ typingIndicatorDelayMs: 999999 });
+	assert.equal(tooLarge.typingIndicatorDelayMs, 10000);
+});
+
+test('ignores invalid typingIndicatorDelayMs values', () => {
+	const result = parseDisplaySettings({ typingIndicatorDelayMs: 'fast' });
+	assert.equal(result.typingIndicatorDelayMs, DEFAULT_TYPING_INDICATOR_DELAY_MS);
+});
+
+test('ignores NaN typingIndicatorDelayMs', () => {
+	const result = parseDisplaySettings({ typingIndicatorDelayMs: NaN });
+	assert.equal(result.typingIndicatorDelayMs, DEFAULT_TYPING_INDICATOR_DELAY_MS);
 });

@@ -38,6 +38,7 @@
 	import { characterStore } from '$lib/stores/character.svelte';
 	import { personaStore } from '$lib/stores/persona.svelte';
 	import { displayStore } from '$lib/stores/display.svelte';
+	import { startWaitTone, stopWaitTone, destroyWaitTone } from '$lib/utils/wait-tone';
 	import { debugEventsStore } from '$lib/stores/debugEvents.svelte';
 	import { getLLMProvider, providerSupportsVision } from '$lib/services/providers/registry';
 	import { isLocalLLMProvider } from '$lib/services/providers/local-endpoints';
@@ -96,6 +97,34 @@
 	$effect(() => {
 		if (isTyping && displayStore.chatDisplayMode === 'sidebar' && !sidebarOpen) {
 			sidebarOpen = true;
+		}
+	});
+
+	// Typing dots visibility — delayed by typingIndicatorDelayMs
+	let typingDotsVisible = $state(false);
+	$effect(() => {
+		if (!isTyping) {
+			typingDotsVisible = false;
+			return;
+		}
+		typingDotsVisible = false;
+		const delay = displayStore.typingIndicatorDelayMs;
+		if (delay <= 0) {
+			typingDotsVisible = true;
+			return;
+		}
+		const timer = setTimeout(() => {
+			typingDotsVisible = true;
+		}, delay);
+		return () => clearTimeout(timer);
+	});
+
+	// Wait tone — starts/stops with typing dots
+	$effect(() => {
+		if (typingDotsVisible && displayStore.waitToneEnabled) {
+			startWaitTone();
+		} else {
+			stopWaitTone();
 		}
 	});
 
@@ -191,6 +220,8 @@
 			for (const img of m.images ?? []) URL.revokeObjectURL(img.url);
 		}
 		for (const img of thinkingImages) URL.revokeObjectURL(img.url);
+		stopWaitTone();
+		destroyWaitTone();
 	});
 
 
@@ -345,10 +376,10 @@
 			<FloatingStatIndicators />
 
 		<!-- Speech Bubble (shows latest response, click to dismiss) -->
-			{#if showBubble}
+			{#if showBubble && (latestResponse || (isTyping && typingDotsVisible))}
 			<SpeechBubble
 				message={latestResponse}
-				isTyping={isTyping}
+				isTyping={isTyping && typingDotsVisible}
 				onHide={handleBubbleHide}
 			/>
 		{/if}
@@ -357,7 +388,7 @@
 			<ChatSidebar
 				open={sidebarOpen && showSidebarTrigger}
 				onClose={() => sidebarOpen = false}
-				{isTyping}
+				isTyping={isTyping && typingDotsVisible}
 			/>
 
 			<!-- The image she's being shown, floated above her head while she considers it -->

@@ -5,6 +5,8 @@ import {
 	CAMERA_LIMITS,
 	DEFAULT_CHAT_DISPLAY_MODE,
 	DEFAULT_SIDEBAR_POSITION,
+	DEFAULT_TYPING_INDICATOR_DELAY_MS,
+	DEFAULT_WAIT_TONE_ENABLED,
 	type CameraSettings,
 	type CameraProfile,
 	type ChatDisplayMode,
@@ -24,7 +26,14 @@ import {
 const STORAGE_KEY = 'utsuwa-display';
 
 export type { CameraSettings, CameraProfile, ChatDisplayMode, SidebarPosition };
-export { CAMERA_DEFAULTS, CAMERA_LIMITS, DEFAULT_CHAT_DISPLAY_MODE, DEFAULT_SIDEBAR_POSITION };
+export {
+	CAMERA_DEFAULTS,
+	CAMERA_LIMITS,
+	DEFAULT_CHAT_DISPLAY_MODE,
+	DEFAULT_SIDEBAR_POSITION,
+	DEFAULT_TYPING_INDICATOR_DELAY_MS,
+	DEFAULT_WAIT_TONE_ENABLED
+};
 
 function createDisplayStore() {
 	// The main scene and the desktop overlay window frame very differently,
@@ -39,6 +48,10 @@ function createDisplayStore() {
 	// Chat display mode and sidebar docking
 	let chatDisplayMode = $state<ChatDisplayMode>(DEFAULT_CHAT_DISPLAY_MODE);
 	let sidebarPosition = $state<SidebarPosition>(DEFAULT_SIDEBAR_POSITION);
+	// Optional delay before the typing indicator appears
+	let typingIndicatorDelayMs = $state(DEFAULT_TYPING_INDICATOR_DELAY_MS);
+	// Optional soft audio ping while the companion is thinking
+	let waitToneEnabled = $state(DEFAULT_WAIT_TONE_ENABLED);
 
 	if (browser) {
 		const saved = localStorage.getItem(STORAGE_KEY);
@@ -50,6 +63,8 @@ function createDisplayStore() {
 			sceneBackground = parsed.sceneBackground;
 			chatDisplayMode = parsed.chatDisplayMode;
 			sidebarPosition = parsed.sidebarPosition;
+			typingIndicatorDelayMs = parsed.typingIndicatorDelayMs;
+			waitToneEnabled = parsed.waitToneEnabled;
 		}
 	}
 
@@ -63,7 +78,9 @@ function createDisplayStore() {
 					physicsIntensity,
 					sceneBackground: $state.snapshot(sceneBackground),
 					chatDisplayMode,
-					sidebarPosition
+					sidebarPosition,
+					typingIndicatorDelayMs,
+					waitToneEnabled
 				})
 			);
 		}
@@ -117,6 +134,19 @@ function createDisplayStore() {
 		const next = computeResetChatDisplay();
 		chatDisplayMode = next.chatDisplayMode;
 		sidebarPosition = next.sidebarPosition;
+		typingIndicatorDelayMs = DEFAULT_TYPING_INDICATOR_DELAY_MS;
+		waitToneEnabled = DEFAULT_WAIT_TONE_ENABLED;
+		save();
+	}
+
+	function setTypingIndicatorDelayMs(ms: number) {
+		if (Number.isNaN(ms)) return;
+		typingIndicatorDelayMs = Math.max(0, Math.min(10000, ms));
+		save();
+	}
+
+	function setWaitToneEnabled(enabled: boolean) {
+		waitToneEnabled = enabled;
 		save();
 	}
 
@@ -139,13 +169,21 @@ function createDisplayStore() {
 		get sidebarPosition() {
 			return sidebarPosition;
 		},
+		get typingIndicatorDelayMs() {
+			return typingIndicatorDelayMs;
+		},
+		get waitToneEnabled() {
+			return waitToneEnabled;
+		},
 		setCamera,
 		resetCamera,
 		setPhysicsIntensity,
 		setSceneBackground,
 		setChatDisplayMode,
 		setSidebarPosition,
-		resetChatDisplay
+		resetChatDisplay,
+		setTypingIndicatorDelayMs,
+		setWaitToneEnabled
 	};
 }
 
