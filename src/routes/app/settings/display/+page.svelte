@@ -1,9 +1,16 @@
 <script lang="ts">
-	import { displayStore, type ChatDisplayMode, type SidebarPosition } from '$lib/stores/display.svelte';
+	import {
+		displayStore,
+		type ChatDisplayMode,
+		type SidebarPosition,
+		type ChatBarAlignment,
+		type TextRevealSpeed
+	} from '$lib/stores/display.svelte';
 
+	// Stored values keep their original names; only the labels changed
 	const modes: { value: ChatDisplayMode; label: string }[] = [
-		{ value: 'bubble', label: 'Bubble' },
-		{ value: 'sidebar', label: 'Sidebar' },
+		{ value: 'bubble', label: 'Immersive' },
+		{ value: 'sidebar', label: 'Chat window' },
 		{ value: 'both', label: 'Both' },
 		{ value: 'off', label: 'Off' }
 	];
@@ -13,9 +20,30 @@
 		{ value: 'right', label: 'Right' }
 	];
 
+	const alignments: { value: ChatBarAlignment; label: string }[] = [
+		{ value: 'left', label: 'Left' },
+		{ value: 'center', label: 'Center' },
+		{ value: 'right', label: 'Right' }
+	];
+
+	const revealSpeeds: { value: TextRevealSpeed; label: string }[] = [
+		{ value: 'off', label: 'Off' },
+		{ value: 'slow', label: 'Slow' },
+		{ value: 'normal', label: 'Normal' },
+		{ value: 'fast', label: 'Fast' }
+	];
+
 	const sidebarActive = $derived(
 		displayStore.chatDisplayMode === 'sidebar' || displayStore.chatDisplayMode === 'both'
 	);
+
+	let windowResetDone = $state(false);
+
+	function resetWindowPosition() {
+		displayStore.requestChatWindowReset();
+		windowResetDone = true;
+		setTimeout(() => (windowResetDone = false), 2000);
+	}
 
 	function stepDelay(delta: number) {
 		const current = displayStore.typingIndicatorDelayMs / 1000;
@@ -50,29 +78,90 @@
 				</button>
 			{/each}
 		</div>
-		<p class="hint">Bubble shows only the latest reply. Sidebar shows the full history.</p>
+		<p class="hint">
+			Immersive shows her replies in a bubble by her head. Chat window is a messenger-style
+			window with the full history and the input docked inside.
+		</p>
 	</section>
 
 	{#if sidebarActive}
 		<section class="card">
 			<div class="card-header">
-				<h3>Sidebar Position</h3>
+				<h3>Chat Window</h3>
 			</div>
 
-			<div class="segment-control" role="group" aria-label="Sidebar position">
-				{#each positions as pos}
-					<button
-						class="segment-btn"
-						class:active={displayStore.sidebarPosition === pos.value}
-						onclick={() => displayStore.setSidebarPosition(pos.value)}
-						aria-pressed={displayStore.sidebarPosition === pos.value}
-					>
-						{pos.label}
+			<div class="settings-stack">
+				<div class="setting-row">
+					<div class="setting-info">
+						<span class="setting-label">Snap side</span>
+						<span class="setting-desc">Which edge the window starts on</span>
+					</div>
+					<div class="segment-control compact" role="group" aria-label="Chat window snap side">
+						{#each positions as pos}
+							<button
+								class="segment-btn"
+								class:active={displayStore.sidebarPosition === pos.value}
+								onclick={() => displayStore.setSidebarPosition(pos.value)}
+								aria-pressed={displayStore.sidebarPosition === pos.value}
+							>
+								{pos.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="setting-row">
+					<div class="setting-info">
+						<span class="setting-label">Window position</span>
+						<span class="setting-desc">Bring the window back if it ends up off screen</span>
+					</div>
+					<button class="reset-btn" onclick={resetWindowPosition}>
+						{windowResetDone ? 'Done' : 'Reset position'}
 					</button>
-				{/each}
+				</div>
 			</div>
 		</section>
 	{/if}
+
+	<section class="card">
+		<div class="card-header">
+			<h3>Floating Bar</h3>
+		</div>
+
+		<div class="segment-control" role="group" aria-label="Floating bar alignment">
+			{#each alignments as alignment}
+				<button
+					class="segment-btn"
+					class:active={displayStore.chatBarAlignment === alignment.value}
+					onclick={() => displayStore.setChatBarAlignment(alignment.value)}
+					aria-pressed={displayStore.chatBarAlignment === alignment.value}
+				>
+					{alignment.label}
+				</button>
+			{/each}
+		</div>
+		<p class="hint">Where the input bar sits along the bottom edge.</p>
+	</section>
+
+	<section class="card">
+		<div class="card-header">
+			<h3>Text Reveal</h3>
+		</div>
+
+		<div class="segment-control" role="group" aria-label="Text reveal speed">
+			{#each revealSpeeds as speed}
+				<button
+					class="segment-btn"
+					class:active={displayStore.textRevealSpeed === speed.value}
+					onclick={() => displayStore.setTextRevealSpeed(speed.value)}
+					aria-pressed={displayStore.textRevealSpeed === speed.value}
+				>
+					{speed.label}
+				</button>
+			{/each}
+		</div>
+		<p class="hint">How quickly her replies appear, word by word. Off shows text instantly.</p>
+	</section>
 
 	<section class="card">
 		<div class="card-header">
@@ -85,16 +174,17 @@
 					<span class="setting-label">Wait tone</span>
 					<span class="setting-desc">Soft audio ping while the typing indicator is visible</span>
 				</div>
-				<label class="toggle">
-					<input
-						type="checkbox"
-						checked={displayStore.waitToneEnabled}
-						onchange={(e) => displayStore.setWaitToneEnabled(e.currentTarget.checked)}
-					/>
+				<button
+					class="service-toggle"
+					class:enabled={displayStore.waitToneEnabled}
+					onclick={() => displayStore.setWaitToneEnabled(!displayStore.waitToneEnabled)}
+					aria-label="Toggle wait tone"
+					aria-pressed={displayStore.waitToneEnabled}
+				>
 					<span class="toggle-track">
 						<span class="toggle-thumb"></span>
 					</span>
-				</label>
+				</button>
 			</div>
 
 			<div class="setting-row">
@@ -153,7 +243,6 @@
 
 	.card {
 		background: var(--bg-primary);
-		border: 1px solid var(--border-light);
 		border-radius: var(--radius-lg);
 		padding: 1rem 1.25rem;
 		box-shadow: var(--shadow-sm);
@@ -179,11 +268,20 @@
 		gap: 1rem;
 	}
 
+	.segment-control.compact {
+		width: auto;
+		flex-shrink: 0;
+	}
+
+	.segment-control.compact .segment-btn {
+		flex: 0 0 auto;
+		padding: 0.4rem 0.9rem;
+	}
+
 	.segment-control {
 		display: flex;
 		width: 100%;
 		background: var(--bg-secondary);
-		border: 1px solid var(--border-light);
 		border-radius: var(--radius-md);
 		padding: 0.25rem;
 		gap: 0.25rem;
@@ -215,20 +313,19 @@
 
 	.reset-btn {
 		padding: 0.375rem 0.75rem;
-		background: transparent;
-		border: 1px solid var(--border-light);
+		background: var(--bg-secondary);
+		border: none;
 		border-radius: var(--radius-md);
 		color: var(--text-secondary);
 		font-size: 0.8125rem;
 		font-weight: 500;
 		cursor: pointer;
-		transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+		transition: background 0.15s ease, color 0.15s ease;
 	}
 
 	.reset-btn:hover {
-		background: var(--bg-secondary);
+		background: var(--bg-tertiary);
 		color: var(--text-primary);
-		border-color: var(--border-light);
 	}
 
 	.hint {
@@ -261,20 +358,16 @@
 		color: var(--text-secondary);
 	}
 
-	.toggle {
+	/* Same switch as the LLM / TTS / STT pages */
+	.service-toggle {
 		position: relative;
-		display: inline-block;
 		width: 40px;
 		height: 22px;
+		background: transparent;
+		border: none;
+		padding: 0;
 		cursor: pointer;
 		flex-shrink: 0;
-	}
-
-	.toggle input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-		position: absolute;
 	}
 
 	.toggle-track {
@@ -282,12 +375,11 @@
 		width: 100%;
 		height: 100%;
 		background: var(--bg-tertiary);
-		border-radius: 11px;
-		transition: background 0.2s ease-out;
-		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15);
+		border-radius: var(--radius-full);
+		transition: background 0.2s ease;
 	}
 
-	.toggle input:checked ~ .toggle-track {
+	.service-toggle.enabled .toggle-track {
 		background: var(--accent);
 	}
 
@@ -297,14 +389,13 @@
 		left: 2px;
 		width: 18px;
 		height: 18px;
-		background: var(--bg-primary);
-		border-radius: 50%;
-		transition: transform 0.2s ease-out;
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-		pointer-events: none;
+		background: #fff;
+		border-radius: var(--radius-full);
+		transition: transform 0.2s ease;
+		box-shadow: var(--shadow-xs);
 	}
 
-	.toggle input:checked ~ .toggle-track .toggle-thumb {
+	.service-toggle.enabled .toggle-thumb {
 		transform: translateX(18px);
 	}
 
@@ -318,7 +409,7 @@
 		width: 2rem;
 		height: 2rem;
 		border-radius: var(--radius-md);
-		border: 1px solid var(--border-light);
+		border: none;
 		background: var(--bg-secondary);
 		color: var(--text-primary);
 		font-size: 1rem;
@@ -340,7 +431,7 @@
 		width: 3.5rem;
 		padding: 0.35rem 0.5rem;
 		border-radius: var(--radius-md);
-		border: 1px solid var(--border-light);
+		border: none;
 		background: var(--bg-secondary);
 		font-size: 0.875rem;
 		color: var(--text-primary);
