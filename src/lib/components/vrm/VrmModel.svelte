@@ -15,6 +15,13 @@
 		clampFrameDelta,
 		type SpringJointParams
 	} from '$lib/engine/spring-physics';
+	import {
+		cameraAngles,
+		angularVelocity,
+		stepJiggle,
+		createJiggleState,
+		type CameraAngles
+	} from '$lib/engine/camera-impulse';
 	import { lipSyncAnalyzer } from '$lib/services/lipsync/analyzer';
 	import { untrack } from 'svelte';
 	import * as THREE from 'three';
@@ -904,6 +911,12 @@
 	let headTrackWeight = 0;
 	const headWorld = new THREE.Vector3();
 	const camWorld = new THREE.Vector3();
+	// Camera jiggle: orbiting excites the spring bones via a damped nudge on
+	// the chest and head; the rig's own springs do the visible swinging
+	const jiggleCamPos = new THREE.Vector3();
+	const jiggleModelPos = new THREE.Vector3();
+	let jiggleState = createJiggleState();
+	let prevCamAngles: CameraAngles | null = null;
 	const lookDir = new THREE.Vector3();
 	const parentQuat = new THREE.Quaternion();
 	const lookQuat = new THREE.Quaternion();
@@ -949,6 +962,21 @@
 			}
 			activePulses = remaining;
 		}
+
+		// Camera-driven jiggle: measure orbit velocity and advance the damped
+		// spring. The offsets are applied around vrm.update() further down, so
+		// only the spring bones see the movement, never the rendered skeleton.
+		{
+			camera.current.getWorldPosition(jiggleCamPos);
+			vrm.scene.getWorldPosition(jiggleModelPos);
+			const angles = cameraAngles(jiggleCamPos, jiggleModelPos);
+			if (prevCamAngles && delta > 0) {
+				const vel = angularVelocity(prevCamAngles, angles, delta);
+				jiggleState = stepJiggle(jiggleState, vel, displayStore.physicsIntensity, delta);
+			}
+			prevCamAngles = angles;
+		}
+
 		if (reactionFace && vrm.expressionManager) {
 			reactionFace.t += delta;
 			const progress = reactionFace.t / reactionFace.duration;
@@ -1001,9 +1029,53 @@
 			}
 		}
 
+		// Camera jiggle, phase 1: displace the chest and head so the spring
+		// solver inside vrm.update() reads their movement and swings hair,
+		// clothes, and accessories accordingly.
+		const jiggleActive =
+			Math.abs(jiggleState.yaw) > 1e-5 || Math.abs(jiggleState.pitch) > 1e-5;
+		let jiggleChest: THREE.Object3D | null = null;
+		let jiggleHead: THREE.Object3D | null = null;
+		if (jiggleActive) {
+			jiggleChest =
+				vrm.humanoid.getNormalizedBoneNode('upperChest') ??
+				vrm.humanoid.getNormalizedBoneNode('chest') ??
+				vrm.humanoid.getNormalizedBoneNode('spine');
+			jiggleHead = vrm.humanoid.getNormalizedBoneNode('head');
+			if (jiggleChest) {
+				jiggleChest.rotation.z += jiggleState.yaw * 0.8;
+				jiggleChest.rotation.y += jiggleState.yaw * 0.4;
+				jiggleChest.rotation.x += jiggleState.pitch;
+			}
+			if (jiggleHead) {
+				jiggleHead.rotation.z += jiggleState.yaw * 0.45;
+				jiggleHead.rotation.y += jiggleState.yaw * 0.25;
+				jiggleHead.rotation.x += jiggleState.pitch * 0.5;
+			}
+		}
+
 		// Update VRM core. The delta is clamped because a huge frame gap (tab
 		// refocus, window drag) otherwise launches the spring bones violently.
 		vrm.update(clampFrameDelta(delta));
+
+		// Camera jiggle, phase 2: put the skeleton straight back. The solver
+		// already sampled the displaced pose; re-syncing the humanoid pushes
+		// the rest pose back onto the raw render skeleton (vrm.update copied
+		// the displaced one), so the body stays planted while only the spring
+		// bones carry the motion.
+		if (jiggleActive) {
+			if (jiggleChest) {
+				jiggleChest.rotation.z -= jiggleState.yaw * 0.8;
+				jiggleChest.rotation.y -= jiggleState.yaw * 0.4;
+				jiggleChest.rotation.x -= jiggleState.pitch;
+			}
+			if (jiggleHead) {
+				jiggleHead.rotation.z -= jiggleState.yaw * 0.45;
+				jiggleHead.rotation.y -= jiggleState.yaw * 0.25;
+				jiggleHead.rotation.x -= jiggleState.pitch * 0.5;
+			}
+			if (jiggleChest || jiggleHead) vrm.humanoid.update();
+		}
 
 		// Track head position for 3D speech bubble
 		const headBone = vrm.humanoid.getNormalizedBoneNode('head');
