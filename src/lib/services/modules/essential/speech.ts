@@ -48,6 +48,33 @@ export const speechModule: ModuleDefinition = {
 				label: 'Speed',
 				description: 'Speech rate (0.5-2.0)',
 				defaultValue: 1.0
+			},
+			{
+				key: 'instructions',
+				type: 'text',
+				label: 'Voice Instructions',
+				description: 'Natural-language description of the synthetic voice',
+			},
+			{
+				key: 'numStep',
+				type: 'number',
+				label: 'Num Steps',
+				description: 'OmniVoice quality steps (4-64)',
+				defaultValue: 32
+			},
+			{
+				key: 'positionTemperature',
+				type: 'number',
+				label: 'Position Temperature',
+				description: 'OmniVoice position temperature (0-2)',
+				defaultValue: 1.0
+			},
+			{
+				key: 'classTemperature',
+				type: 'number',
+				label: 'Class Temperature',
+				description: 'OmniVoice class temperature (0-2)',
+				defaultValue: 0.2
 			}
 		]
 	},

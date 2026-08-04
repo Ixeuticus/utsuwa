@@ -340,7 +340,11 @@ export async function sendCompanionMessage(
 					speed: (speechSettings.speed as number) ?? 1,
 					// Leave unset when the user hasn't picked one; the orchestrator
 					// infers the primary language from the first segment instead.
-					language: (speechSettings.activeLanguage as string) || undefined
+					language: (speechSettings.activeLanguage as string) || undefined,
+					instructions: (speechSettings.instructions as string) || undefined,
+					numStep: (speechSettings.numStep as number) ?? undefined,
+					positionTemperature: (speechSettings.positionTemperature as number) ?? undefined,
+					classTemperature: (speechSettings.classTemperature as number) ?? undefined
 				});
 			}
 		}

@@ -345,6 +345,26 @@ export function createTtsSettingsState() {
 		modulesStore.setModuleSetting('speech', 'speed', speed ?? 1);
 	}
 
+	function handleTTSInstructionsChange(instructions: string | undefined) {
+		modulesStore.setModuleSetting('speech', 'instructions', instructions ?? '');
+	}
+
+
+	function handleTTSNumStepChange(numStep: number | undefined) {
+		if (numStep !== undefined && Number.isNaN(numStep)) return;
+		modulesStore.setModuleSetting('speech', 'numStep', numStep ?? 32);
+	}
+
+	function handleTTSPositionTemperatureChange(positionTemperature: number | undefined) {
+		if (positionTemperature !== undefined && Number.isNaN(positionTemperature)) return;
+		modulesStore.setModuleSetting('speech', 'positionTemperature', positionTemperature ?? 1);
+	}
+
+	function handleTTSClassTemperatureChange(classTemperature: number | undefined) {
+		if (classTemperature !== undefined && Number.isNaN(classTemperature)) return;
+		modulesStore.setModuleSetting('speech', 'classTemperature', classTemperature ?? 0.2);
+	}
+
 	function handleTTSApiKeyBlur() {
 		const providerId = speechSettings.activeProvider as string;
 		if (!providerId) return;
@@ -390,6 +410,10 @@ export function createTtsSettingsState() {
 		handleTTSVoiceChange,
 		handleTTSLanguageChange,
 		handleTTSSpeedChange,
+		handleTTSInstructionsChange,
+		handleTTSNumStepChange,
+		handleTTSPositionTemperatureChange,
+		handleTTSClassTemperatureChange,
 		handleTTSApiKeyBlur,
 		handleApiKeyChange,
 		toggleTTS
